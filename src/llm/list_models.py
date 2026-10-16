@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 
 
 def main() -> None:
-    # .env is in the project root: src/repopilot/llm/list_models.py → parents[3]
-    load_dotenv(Path(__file__).resolve().parents[3] / ".env", override=True)
+    # .env is in the project root: src/llm/list_models.py → parents[2]
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=True)
     key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not key:
         sys.exit("Set GOOGLE_API_KEY in the project's .env first (get one at https://aistudio.google.com/apikey).")

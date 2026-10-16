@@ -286,7 +286,8 @@ The semantic cache lives in Redis. With Qdrant, vectors live in your Qdrant serv
 ```bash
 git clone https://github.com/<your-username>/repopilot.git && cd repopilot
 poetry env use 3.12                # create the environment with Python 3.12
-poetry install                     # installs dependencies, pytest, and the `repopilot` command
+poetry install                     # installs dependencies and pytest
+poetry run pip install -e . --no-deps   # registers the `repopilot` package and command
 
 cp .env.example .env               # Windows: copy — then add your GOOGLE_API_KEY
 ```
@@ -322,7 +323,7 @@ The first start indexes the whole repo, so it is the slow one. Later starts re-i
 
 ## Configuration
 
-All settings live in [`src/repopilot/config.yaml`](src/repopilot/config.yaml). API keys go in `.env` in the project root; [`.env.example`](.env.example) is the template.
+All settings live in [`src/config.yaml`](src/config.yaml). API keys go in `.env` in the project root; [`.env.example`](.env.example) is the template.
 
 | Section | Controls |
 |---|---|
@@ -376,13 +377,13 @@ Reranking never lowered hit@5, and it ranked the right file higher. `bge-small` 
 ```
 repopilot/
 ├── README.md
-├── pyproject.toml           dependencies and install config (Poetry)
+├── pyproject.toml           dependencies (Poetry) and package config
 ├── poetry.lock              exact installed versions
 ├── requirements.txt         same dependencies, for plain pip
 ├── .env.example             API key template (copy to .env)
 ├── evals/questions.yaml     eval question set
 ├── tests/                   pytest suite
-└── src/repopilot/           the Python package
+└── src/                     all source code, installed as the `repopilot` package
     ├── main.py              REPL and command routing
     ├── config.yaml          all settings
     ├── agent/               /ask agent, tools, sources, query handling

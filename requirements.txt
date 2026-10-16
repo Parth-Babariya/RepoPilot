@@ -1,5 +1,5 @@
 # RepoPilot dependencies — requires Python 3.12 (tree-sitter-languages has no 3.13 build).
-# The primary install is Poetry (`poetry install`); this file is for plain pip.
+# The primary install is Poetry (see README); this file is for plain pip.
 # Keep in sync with pyproject.toml.
 #
 # Install with pip, from this folder (the project root):

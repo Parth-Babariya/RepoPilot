@@ -1,7 +1,7 @@
 # Eval questions about RepoPilot's own code.
 # Run RepoPilot from the project root (the folder containing pyproject.toml) and type /eval.
 #
-#   expected_files — paths inside the src/repopilot/ package that contain the answer
+#   expected_files — paths inside src/ that contain the answer
 #                    (matched by path suffix, so they work from the project root)
 #   expected_facts — names/phrases a correct answer should mention (scores the answer)
 #

@@ -29,7 +29,7 @@ from repopilot.context.indexers.watcher import start_watcher, stop_watcher
 
 # .env lives in the project root (next to pyproject.toml) and wins over keys
 # already set in Windows/shell environment variables.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]   # src/repopilot/main.py → root
+PROJECT_ROOT = Path(__file__).resolve().parents[1]   # src/main.py → root
 ENV_FILE = PROJECT_ROOT / ".env"
 load_dotenv(ENV_FILE, override=True)
 # Google's docs call the key GEMINI_API_KEY; LangChain reads GOOGLE_API_KEY — accept either.

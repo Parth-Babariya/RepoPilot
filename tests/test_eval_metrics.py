@@ -41,7 +41,7 @@ def test_bundled_question_set_is_valid():
     assert len({q.id for q in questions}) == len(questions)   # ids are unique
     # every expected file actually exists (paths are relative to the package folder;
     # retrieval matching is by path suffix, so they match from the project root too)
-    package = path.parents[1] / "src" / "repopilot"
+    package = path.parents[1] / "src"
     for q in questions:
         for expected in q.expected_files:
             assert (package / expected).exists(), f"{q.id}: {expected} does not exist"

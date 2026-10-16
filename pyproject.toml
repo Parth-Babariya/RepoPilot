@@ -33,12 +33,40 @@ dependencies = [
 
 
 [project.scripts]
-# Installs a `repopilot` command (repopilot.cmd on Windows) in the environment
+# Installs a `repopilot` command (repopilot.exe on Windows) in the environment
 repopilot = "repopilot.main:run"
 
 
 [tool.poetry]
-packages = [{include = "repopilot", from = "src"}]
+# Poetry manages dependencies; setuptools (below) installs the package, because
+# Poetry can't install src/ under the name `repopilot`. After `poetry install`, run:
+#   poetry run pip install -e . --no-deps
+package-mode = false
+
+
+[tool.setuptools]
+# The code lives directly in src/ but is installed as the `repopilot` package,
+# so imports are `from repopilot.agent import …` and the command is `repopilot`.
+package-dir = {"repopilot" = "src"}
+packages = [
+    "repopilot",
+    "repopilot.agent",
+    "repopilot.cache",
+    "repopilot.context",
+    "repopilot.context.indexers",
+    "repopilot.context.retrievers",
+    "repopilot.evaluation",
+    "repopilot.llm",
+    "repopilot.mcp_integration",
+    "repopilot.memory",
+    "repopilot.observability",
+    "repopilot.skills",
+    "repopilot.tasks",
+    "repopilot.tools",
+]
+
+[tool.setuptools.package-data]
+repopilot = ["config.yaml", "mcp_servers.json"]
 
 
 [tool.poetry.group.dev.dependencies]
@@ -46,11 +74,12 @@ pytest = ">=8.0"
 
 
 [tool.pytest.ini_options]
-# "src" makes `import repopilot` work, "." makes `import tests.…` work
-pythonpath = ["src", "."]
+# `import repopilot` comes from the installed package (poetry install);
+# "." makes `import tests.…` work
+pythonpath = ["."]
 testpaths = ["tests"]
 
 
 [build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
