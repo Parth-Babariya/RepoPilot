@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 
 
-from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.table import Table
 
@@ -15,11 +14,11 @@ from repopilot.config import config
 from repopilot.context.retrievers.factory import get_retriever
 from repopilot.context.retrievers.reranker import rerank_config
 from repopilot.context.symbol_index import symbols_enabled
+from repopilot.evaluation.judge import judge_answer
 from repopilot.evaluation.metrics import (
     EvalQuestion, context_recall, fact_recall, load_questions, mean, reciprocal_rank, retrieval_rank,
 )
 from repopilot.observability.logger import get_logger
-from repopilot.llm.factory import get_judge_llm
 from repopilot.observability.usage import get_usage_store, track
 
 logger  = get_logger(__name__)
@@ -33,42 +32,14 @@ console = Console()
 #      the rank of the first chunk from an expected file (hit@k, MRR).
 #   2. Full answer — run the real /ask agent on a fresh thread (no history,
 #      no semantic cache) and capture its answer and every tool output.
-#   3. Score — free deterministic metrics (context recall, fact recall)
-#      plus an LLM judge (judge_model) for faithfulness and correctness.
+#   3. Score — free deterministic metrics (metrics.py: context recall,
+#      fact recall) plus an LLM judge (judge.py) for faithfulness and correctness.
 #   4. Cost/latency — every call is tagged with session "eval:<run>:<id>"
 #      via usage tracking, so per-question cost comes from the usage DB.
 #
 # Each run is saved as JSON with a config snapshot, and the summary is
 # compared against the previous run so the effect of a change is visible.
 # ------------------------------------------------------------------
-
-_JUDGE_CONTEXT_CHARS = 12_000
-
-
-class _JudgeVerdict(BaseModel):
-    faithfulness: float = Field(description="0-1: how fully the answer's claims are supported by the retrieved code")
-    correctness:  float = Field(description="0-1: how well the answer correctly and completely answers the question")
-    reason: str         = Field(description="One short sentence")
-
-
-_JUDGE_PROMPT = """You grade answers from a code assistant.
-
-QUESTION:
-{question}
-
-FACTS A CORRECT ANSWER SHOULD MENTION (may be empty):
-{facts}
-
-CODE THE ASSISTANT RETRIEVED (its only evidence):
-{context}
-
-ASSISTANT'S ANSWER:
-{answer}
-
-Score two things from 0 to 1:
-- faithfulness: are the answer's claims supported by the retrieved code? Penalise
-  invented functions, files or behaviour. An honest "I couldn't find it" is faithful.
-- correctness: does it correctly and completely answer the question, covering the facts listed?"""
 
 
 def _content(message) -> str:
@@ -77,21 +48,6 @@ def _content(message) -> str:
     if isinstance(content, list):
         return " ".join(b.get("text", "") for b in content if isinstance(b, dict))
     return content or ""
-
-
-async def _judge(question: EvalQuestion, answer: str, tool_outputs: list[str]) -> _JudgeVerdict:
-    llm = get_judge_llm("eval-judge", temperature=0).with_structured_output(_JudgeVerdict)
-
-    prompt = _JUDGE_PROMPT.format(
-        question=question.question,
-        facts="\n".join(f"- {f}" for f in question.expected_facts) or "(none)",
-        context="\n---\n".join(tool_outputs)[:_JUDGE_CONTEXT_CHARS] or "(nothing retrieved)",
-        answer=answer,
-    )
-    verdict = await llm.ainvoke(prompt)
-    verdict.faithfulness = min(max(verdict.faithfulness, 0.0), 1.0)
-    verdict.correctness  = min(max(verdict.correctness, 0.0), 1.0)
-    return verdict
 
 
 async def _evaluate_one(agent, question: EvalQuestion, run_id: str, top_k: int) -> dict:
@@ -124,7 +80,7 @@ async def _evaluate_one(agent, question: EvalQuestion, run_id: str, top_k: int) 
         # 3. Scores
         result["context_recall"] = context_recall(tool_outputs, question.expected_files)
         result["fact_recall"]    = fact_recall(answer, question.expected_facts)
-        verdict = await _judge(question, answer, tool_outputs)
+        verdict = await judge_answer(question, answer, tool_outputs)
         result["faithfulness"] = verdict.faithfulness
         result["correctness"]  = verdict.correctness
         result["judge_reason"] = verdict.reason

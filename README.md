@@ -66,6 +66,7 @@ flowchart TB
     repl <-. "first question<br/>of a session" .-> cache[("Semantic cache<br/>Redis")]
 
     evalr --> ask
+    evalr --> ejudge["LLM judge<br/>faithfulness ·<br/>correctness"]
     plan --> workers["Task agents<br/>+ LLM judge"]
 
     subgraph tools["Agent tools"]
@@ -96,15 +97,27 @@ flowchart TB
         usage[("Usage & cost")]
     end
     ask --- mem
-    workers --- tasks
-    workers -. every LLM call .-> usage
+    plan --- tasks
+
+    subgraph models["Models"]
+        llm["Chat LLM<br/>Gemini · OpenAI · Anthropic"]
+        local["Local models · fastembed<br/>embeddings · reranker"]
+    end
+    ask --> llm
+    workers --> llm
+    ejudge --> llm
+    vec -. embed .-> local
+    rerank -.-> local
+    llm -. every call .-> usage
 
     classDef entry fill:#1f6feb,stroke:#1f6feb,color:#fff
     classDef agent fill:#8957e5,stroke:#8957e5,color:#fff
     classDef store fill:#2da44e,stroke:#2da44e,color:#fff
+    classDef model fill:#bf8700,stroke:#bf8700,color:#fff
     class dev,repl entry
-    class ask,plan,evalr,workers agent
+    class ask,plan,evalr,workers,ejudge agent
     class cache,vec,symgraph,mem,tasks,usage store
+    class llm,local model
 ```
 
 The REPL sends each command to one of three agents. `/ask` uses a tool-calling agent that searches the code. `/plan` runs a planner, then several task agents. `/eval` runs the Q&A agent on a fixed question set and scores the results. Everything that needs to persist is stored on disk in a `.repopilot/` folder inside the repo being analysed. The only exception is Redis, which runs as a separate server.
@@ -199,7 +212,7 @@ flowchart TD
         done --> ready
     end
 
-    done -. "all tasks finished" .-> reindex["Re-index generated code<br/>so /ask can answer about it"]
+    ready -- "nothing left to run" --> reindex["Re-index generated code<br/>so /ask can answer about it"]
 ```
 
 Each task agent gets only the tools its task type needs. For example, `review` tasks can read and write files but not run commands, and only `test` and `integrate` tasks get `run_command`. Before a task starts, the outputs of the tasks it depends on are added to its prompt.
@@ -249,6 +262,7 @@ Everything RepoPilot stores goes in `.repopilot/` inside the repo being analysed
 | `tasks.db` | `/plan` projects and tasks |
 | `usage.db` | Tokens, cost and latency of every model call |
 | `evals/` | Saved `/eval` runs |
+| `skills/` | Your own skills (`SKILL.md` files), loaded on demand |
 | `logs/repopilot.log` | Detailed logs (the terminal shows only warnings) |
 
 The semantic cache lives in Redis. With Qdrant, vectors live in your Qdrant server or cloud cluster.
@@ -381,6 +395,8 @@ All settings live in [`src/config.yaml`](src/config.yaml). API keys go in `.env`
 | Correctness | Does the answer fully answer the question? (LLM judge) |
 | Latency, cost | From the usage tracker |
 
+**Why both kinds of metric?** The deterministic metrics ([`metrics.py`](src/evaluation/metrics.py)) are free, exactly repeatable and unit-tested, but they only check *what* was retrieved and *which* words appear. An answer can mention every expected fact and still be wrong, or invent a function that doesn't exist. The LLM judge ([`judge.py`](src/evaluation/judge.py)) catches those cases. It is a separate `judge_model` running at temperature 0, and it sees exactly the code the agent retrieved, so it can check each claim against the evidence. Its cost is reported separately so it doesn't inflate the cost per question.
+
 Each run is saved with a snapshot of the configuration, and the report shows the change from the previous run. To measure what a component adds, run once with it switched off and once with it on.
 
 ### Retrieval benchmark (measured)
@@ -426,7 +442,7 @@ repopilot/
     │   ├── retrievers/      vector search + cross-encoder reranking
     │   └── symbol_index.py  symbol & call-graph index
     ├── tasks/               /plan: planner, approval, orchestrator, executor + judge, recovery
-    ├── evaluation/          /eval metrics and runner
+    ├── evaluation/          /eval: deterministic metrics, LLM judge, runner
     ├── observability/       logging, usage & cost tracking, /stats
     ├── llm/                 model factory (Gemini / OpenAI / Anthropic), local embeddings
     ├── cache/               Redis semantic cache
