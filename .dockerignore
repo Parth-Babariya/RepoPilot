@@ -1,0 +1,13 @@
+# Secrets — passed at runtime via env_file, never copied into the image
+.env
+
+.git/
+.venv/
+venv/
+.repopilot/
+.chromadb/
+**/__pycache__/
+.pytest_cache/
+*.egg-info/
+tests/
+evals/

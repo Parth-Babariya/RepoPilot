@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import platform
 import socket
 import subprocess
@@ -185,7 +186,8 @@ async def build_semantic_cache() -> SemanticCache | None:
         logger.info("Semantic cache: disabled (semantic_cache.enabled is false in config.yaml)")
         return None
 
-    redis_url = cache_config.get("redis_url", "redis://localhost:6379")
+    # REDIS_URL (e.g. set by docker-compose) wins over config.yaml
+    redis_url = os.getenv("REDIS_URL") or cache_config.get("redis_url", "redis://localhost:6379")
     wsl_distro = cache_config.get("wsl_distro")
     if wsl_distro and not await asyncio.to_thread(_ensure_wsl_redis, wsl_distro, redis_url):
         logger.warning(f"Semantic cache: disabled (could not start Redis in WSL distro '{wsl_distro}')")

@@ -319,7 +319,39 @@ The first start indexes the whole repo, so it is the slow one. Later starts re-i
 
 **Optional: semantic cache.** This needs Redis 8+ or Redis Stack, for vector search. Without Redis, RepoPilot runs normally with the cache turned off.
 - **Windows:** install Redis in WSL. Run `wsl --install -d Ubuntu-24.04`, then install Redis 8 from [packages.redis.io](https://redis.io/docs/latest/operate/oss_and_stack/install/install-redis/install-redis-on-linux/), and set `semantic_cache.wsl_distro`. RepoPilot starts Redis automatically.
-- **Docker:** run `docker run -d -p 6379:6379 redis/redis-stack-server` and leave `wsl_distro` empty.
+- **Docker:** run `docker run -d -p 6379:6379 redis:8` and leave `wsl_distro` empty.
+
+### Run with Docker
+
+This needs only Docker and a `.env` file, with no Python, Node or Redis installed. Docker Compose starts RepoPilot and a Redis server for the semantic cache. The image already contains the embedding and reranking models.
+
+```bash
+cp .env.example .env               # add your GOOGLE_API_KEY
+docker compose build
+
+docker compose run --rm repopilot                              # analyse RepoPilot itself
+REPO_PATH=/path/to/repo docker compose run --rm repopilot      # analyse another repo
+```
+
+PowerShell: `$env:REPO_PATH="C:\path\to\repo"; docker compose run --rm repopilot`
+
+```mermaid
+flowchart LR
+    subgraph host["Your machine"]
+        repo["Repository<br/>REPO_PATH"]
+        env[".env<br/>API keys"]
+    end
+    subgraph compose["docker compose"]
+        app["repopilot container<br/>Python 3.12 · Node.js ·<br/>local models"]
+        redis[("redis:8<br/>semantic cache")]
+    end
+    repo -- "mounted at /workspace" --> app
+    env -- "env_file, never in the image" --> app
+    app -- "REDIS_URL" --> redis
+    app --> llm["Gemini / OpenAI /<br/>Anthropic API"]
+```
+
+API keys are passed in when the container starts and are never copied into the image. Index data is written to `.repopilot/` inside the mounted repo, so it persists between runs. Downloaded models and Redis data are kept in Docker volumes.
 
 ## Configuration
 
@@ -381,6 +413,8 @@ repopilot/
 ├── poetry.lock              exact installed versions
 ├── requirements.txt         same dependencies, for plain pip
 ├── .env.example             API key template (copy to .env)
+├── Dockerfile               RepoPilot image
+├── docker-compose.yml       RepoPilot + Redis
 ├── evals/questions.yaml     eval question set
 ├── tests/                   pytest suite
 └── src/                     all source code, installed as the `repopilot` package
@@ -410,7 +444,7 @@ The suite covers the task store and orchestration loop, symbol extraction and ca
 
 ## Tech stack
 
-Python · LangChain · LangGraph · Google Gemini / OpenAI / Anthropic · ChromaDB · Qdrant · fastembed · tree-sitter · Redis (RedisVL) · SQLite · MCP · watchdog · Rich · pytest
+Python · LangChain · LangGraph · Google Gemini / OpenAI / Anthropic · ChromaDB · Qdrant · fastembed · tree-sitter · Redis (RedisVL) · SQLite · MCP · watchdog · Rich · pytest · Docker
 
 ---
 

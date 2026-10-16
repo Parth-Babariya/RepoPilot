@@ -1,0 +1,37 @@
+# RepoPilot + Redis (semantic cache).
+#
+#   docker compose run --rm repopilot                       # analyse this repo
+#   REPO_PATH=/path/to/repo docker compose run --rm repopilot   # analyse another repo
+#   (PowerShell: $env:REPO_PATH="C:\path\to\repo"; docker compose run --rm repopilot)
+#
+# `run` (not `up`) because RepoPilot is an interactive terminal app.
+
+services:
+  repopilot:
+    build: .
+    image: repopilot:latest
+    stdin_open: true
+    tty: true
+    env_file: .env                     # API keys — never baked into the image
+    environment:
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ${REPO_PATH:-.}:/workspace     # the repository to analyse
+      - model-cache:/cache             # embedding/reranker models and npm packages
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:8                     # Redis 8 includes vector search
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  model-cache:
+  redis-data:
