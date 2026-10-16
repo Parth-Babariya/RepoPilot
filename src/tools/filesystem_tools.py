@@ -1,6 +1,8 @@
 import os
 from langchain.tools import tool
 
+from repopilot.tools.safety import check_path
+
 
 _MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
@@ -10,6 +12,8 @@ def read_file(file_path: str) -> str:
    """Read and return the contents of a file."""
    if not file_path or not file_path.strip():
        return "Error: file path cannot be empty"
+   if error := check_path(file_path):
+       return error
    if not os.path.exists(file_path):
        return f"Error: file not found: {file_path}"
    if not os.path.isfile(file_path):
@@ -33,6 +37,8 @@ def write_file(file_path: str, content: str) -> str:
    """Write content to a file, creating it and any parent directories if needed."""
    if not file_path or not file_path.strip():
        return "Error: file path cannot be empty"
+   if error := check_path(file_path, write=True):
+       return error
    try:
        if os.path.dirname(file_path):
            os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -52,6 +58,8 @@ def append_file(file_path: str, content: str) -> str:
    """Append content to an existing file."""
    if not file_path or not file_path.strip():
        return "Error: file path cannot be empty"
+   if error := check_path(file_path, write=True):
+       return error
    if not os.path.exists(file_path):
        return f"Error: file not found: {file_path}"
    if not os.path.isfile(file_path):
@@ -89,6 +97,8 @@ def list_directory(directory: str) -> str:
    """List files and subdirectories inside a directory."""
    if not directory or not directory.strip():
        return "Error: directory cannot be empty"
+   if error := check_path(directory):
+       return error
    if not os.path.exists(directory):
        return f"Error: directory not found: {directory}"
    if not os.path.isdir(directory):
@@ -107,6 +117,8 @@ def file_exists(file_path: str) -> str:
    """Check whether a file or directory exists."""
    if not file_path or not file_path.strip():
        return "Error: file path cannot be empty"
+   if error := check_path(file_path):
+       return error
    return str(os.path.exists(file_path))
 
 

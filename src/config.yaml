@@ -1,7 +1,6 @@
 embeddings:
- # Free, local (fastembed — downloaded once, no API key). Measured on evals/questions.yaml
- # (file hit@5 / MRR, search alone → with reranker):
- #   bge-small 83% / 0.65 → 83% / 0.68   ·   bge-base 79% / 0.64 → 83% / 0.71, but ~3x slower to index
+ # Free, local (fastembed — downloaded once, no API key). bge-small matched bge-base's
+ # accuracy on evals/questions.yaml and indexes ~3x faster (see rag: below for current numbers).
  # Switching model builds a fresh index automatically (one collection per model).
  provider: fastembed      # fastembed | openai | huggingface
  model: BAAI/bge-small-en-v1.5
@@ -21,6 +20,18 @@ semantic_cache:
 
 tasks:
  db_path: .repopilot/tasks.db
+ verify_timeout_seconds: 120   # limit for each task's verify_command (e.g. running its tests)
+ max_replans: 1                # times per /plan run a failed task may be re-planned (0 = never)
+
+safety:
+ # Agents can only read/write inside the folder RepoPilot runs in, and never .env files.
+ workspace_only: true
+ # Common read-only/build/test commands run directly. Anything else asks you first
+ # (false = refuse instead). During /eval nobody can answer, so those are refused.
+ confirm_other_commands: true
+ # Keep only MCP tools that read (GitHub get/list/search, filesystem read) —
+ # RepoPilot never needs to push, open PRs or edit files through MCP.
+ mcp_read_only: true
 
 llm:
  # Free: Gemini (key from https://aistudio.google.com/apikey → GOOGLE_API_KEY in .env).
@@ -50,6 +61,10 @@ chromadb:
  collection_name: codebase
 
 rag:
+ # semantic = vector search · hybrid = vector + BM25 keyword search merged by rank
+ # (works with Chroma and Qdrant). On evals/questions.yaml (bge-small, hit@5 / MRR):
+ #   semantic 88% / 0.62 · + rerank 83% / 0.66 · hybrid 79% / 0.66 · hybrid + rerank 79% / 0.60
+ # Hybrid didn't help on this question set, so semantic stays the default — try both on your repo with /eval.
  mode: semantic           # semantic | hybrid
 
 vector_store:
@@ -57,8 +72,8 @@ vector_store:
  retrieval_mode: hybrid   # dense | sparse | hybrid (used when rag.mode is hybrid and provider is qdrant)
 
 rerank:
- # On evals/questions.yaml it ranks the right file higher (MRR 0.65 → 0.68 with bge-small,
- # 0.64 → 0.71 with bge-base) and never lowered hit@5. Costs ~1s per search on a laptop CPU.
+ # On evals/questions.yaml it ranks the right file higher (MRR 0.62 → 0.66 with bge-small) but
+ # found it slightly less often (hit@5 88% → 83%, one question). Costs ~1.4s per search on a laptop CPU.
  enabled: true            # vector search fetches `candidates` chunks, a local cross-encoder keeps the best k
  # jina-v1-tiny beat ms-marco-MiniLM-L-6 and jina-v1-turbo in a reranker comparison, and was fastest
  model: jinaai/jina-reranker-v1-tiny-en

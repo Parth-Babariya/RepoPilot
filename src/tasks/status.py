@@ -15,6 +15,7 @@ _STATUS_STYLE = {
     "pending":     "dim",
     "blocked":     "red",
     "skipped":     "dim",
+    "replaced":    "dim",
 }
 
 

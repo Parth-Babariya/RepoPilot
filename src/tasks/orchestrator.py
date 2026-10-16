@@ -4,13 +4,14 @@ import asyncio
 import json
 
 from rich.console import Console
+from rich.markup import escape
 
 from pathlib import Path
 
 from repopilot.config import config
 from repopilot.tasks.task_store import SQLiteTaskStore
 from repopilot.tasks.executor import run_subtask_agent
-from repopilot.tasks.planner import create_plan
+from repopilot.tasks.planner import ExecutionPlan, create_plan, replan, validate_revision
 from repopilot.tasks.approval import present_plan_for_approval
 from repopilot.tasks.recovery import RecoveryManager
 from repopilot.context.indexers.factory import get_indexer
@@ -25,12 +26,21 @@ class TaskOrchestrator:
     Main execution loop: finds tasks whose dependencies are met,
     claims them atomically, and dispatches them to subtask agents.
 
+    When a task fails all its retries, it asks the planner to replace that
+    task and the tasks depending on it (with human approval), up to
+    tasks.max_replans times per run; otherwise its dependents are blocked.
+
     Serial by default (max_concurrent=1) for cost control and determinism.
     """
 
-    def __init__(self, store: SQLiteTaskStore, max_concurrent: int = 1) -> None:
+    def __init__(self, store: SQLiteTaskStore, max_concurrent: int = 1,
+                 max_replans: int | None = None) -> None:
         self.store = store
         self.max_concurrent = max_concurrent
+        if max_replans is None:
+            max_replans = int(config.get("tasks", {}).get("max_replans", 1))
+        self.replans_left = max_replans
+        self._handled_failures: set[str] = set()   # failed task IDs already considered for re-planning
 
     async def run(self, project_id: str) -> None:
         """
@@ -45,6 +55,10 @@ class TaskOrchestrator:
         console.print(f"\n[bold blue]Starting execution for project {project_id}[/bold blue]\n")
 
         while True:
+            # A task that used up its retries: try to re-plan around it first.
+            for failed in self._new_failures(project_id):
+                self._try_replan(project_id, failed)
+
             # A failed task means its dependents can never run — mark them
             # blocked so the loop can terminate instead of waiting forever.
             self.store.block_unreachable_tasks(project_id)
@@ -55,14 +69,16 @@ class TaskOrchestrator:
             completed   = progress.get("completed", 0)
             failed      = progress.get("failed", 0)
             blocked     = progress.get("blocked", 0)
-            total       = sum(progress.values())
+            replaced    = progress.get("replaced", 0)
+            total       = sum(progress.values()) - replaced
 
             console.print(
                 f"[dim]Progress: {completed}/{total} completed"
                 f" · {in_progress} in-progress"
                 f" · {pending} pending"
                 f" · {failed} failed"
-                f" · {blocked} blocked[/dim]"
+                f" · {blocked} blocked"
+                + (f" · {replaced} replaced" if replaced else "") + "[/dim]"
             )
             # all tasks are done - nothing in pending and nothing is in progress
             if pending == 0 and in_progress == 0:
@@ -92,26 +108,114 @@ class TaskOrchestrator:
 
     async def _execute(self, task: dict) -> None:
         """Claim and execute a single task, handling retries via fail_task."""
-        console.print(f"\n[bold]▶ Starting:[/bold] [{task['id']}] {task['title']}")
+        # escape(): "[task_001]" would otherwise be read as a Rich style tag and vanish
+        label = escape(f"[{task['id']}] {task['title']}")
+        console.print(f"\n[bold]▶ Starting:[/bold] {label}")
 
-        if not self.store.claim_task(task["id"]):
+        project_id = task["project_id"]
+        if not self.store.claim_task(project_id, task["id"]):
             console.print(f"[dim]⚠ Task {task['id']} already claimed — skipping[/dim]")
             return
 
         try:
             # Fetch what dependency tasks actually produced and inject into the agent.
             dep_ids     = json.loads(task.get("depends_on") or "[]")
-            dep_outputs = self.store.get_dep_results(dep_ids)
+            dep_outputs = self.store.get_dep_results(project_id, dep_ids)
 
             result = await run_subtask_agent(task, dep_outputs=dep_outputs)
-            self.store.complete_task(task["id"], result)
-            console.print(f"[green]✅ Completed:[/green] [{task['id']}] {task['title']}")
+            self.store.complete_task(project_id, task["id"], result)
+            console.print(f"[green]✅ Completed:[/green] {label}")
 
         except Exception as e:
             error_msg = str(e)
-            self.store.fail_task(task["id"], error_msg)
-            console.print(f"[red]❌ Failed:[/red]    [{task['id']}] {task['title']}: {error_msg[:120]}")
+            self.store.fail_task(project_id, task["id"], error_msg)
+            console.print(f"[red]❌ Failed:[/red]    {label}: {escape(error_msg[:120])}")
             logger.error(f"Task {task['id']} failed: {error_msg}")
+
+
+    # ------------------------------------------------------------------
+    # Re-planning
+    # ------------------------------------------------------------------
+
+    def _new_failures(self, project_id: str) -> list[dict]:
+        failures = [t for t in self.store.get_all_tasks(project_id)
+                    if t["status"] == "failed" and t["id"] not in self._handled_failures]
+        self._handled_failures.update(t["id"] for t in failures)
+        return failures
+
+    def _try_replan(self, project_id: str, failed: dict) -> bool:
+        """
+        Replace a permanently failed task and everything downstream of it with
+        new tasks from the planner, if the user approves. Returns True if applied.
+        """
+        if self.replans_left <= 0:
+            return False
+
+        tasks      = self.store.get_all_tasks(project_id)
+        downstream = _downstream_ids(tasks, failed["id"])
+        affected   = [t for t in tasks if t["id"] in downstream and t["status"] in ("pending", "blocked")]
+        unaffected = [t for t in tasks if t["id"] not in downstream and t["status"] in ("pending", "in_progress")]
+        completed  = [t for t in tasks if t["status"] in ("completed", "skipped")]
+        project    = self.store.get_project(project_id)
+
+        console.print(
+            f"\n[yellow]⟳ {failed['id']} failed after {failed['retry_count']} attempts — "
+            f"asking the planner for a revised plan ({len(affected)} dependent task(s) affected)...[/yellow]"
+        )
+        try:
+            revision = replan(project["goal"], completed, failed, affected, unaffected,
+                              existing_ids=[t["id"] for t in tasks])
+        except Exception as e:
+            logger.error(f"Re-planning failed: {e}")
+            console.print(f"[red]Re-planning failed: {e}[/red]")
+            return False
+
+        problems = validate_revision(
+            revision,
+            dependable_ids={t["id"] for t in completed + unaffected},
+            existing_ids={t["id"] for t in tasks},
+        )
+        if problems:
+            console.print("[red]The revised plan is invalid, so it was not used:[/red]")
+            for problem in problems:
+                console.print(f"  • {problem}")
+            return False
+
+        proposal = ExecutionPlan(
+            project_name=project["name"],
+            goal_summary=revision.reason,
+            tech_stack=[],
+            total_estimated_hours=round(sum(t.estimated_minutes for t in revision.tasks) / 60, 1),
+            tasks=revision.tasks,
+            risks=[],
+            assumptions=[],
+        )
+        approved = present_plan_for_approval(proposal, title="Revised plan",
+                                             reject_label="[R]eject (stop and keep the failure)")
+        if approved is None:
+            console.print("[dim]Revision rejected — tasks depending on the failure will be blocked.[/dim]")
+            return False
+
+        self.replans_left -= 1
+        self.store.apply_replan(project_id, [failed["id"], *(t["id"] for t in affected)],
+                                approved.tasks, revision.reason)
+        console.print(f"[green]✓ Revised plan applied: {len(approved.tasks)} new task(s).[/green]")
+        return True
+
+
+def _downstream_ids(tasks: list[dict], root_id: str) -> set[str]:
+    """IDs of every task that depends on root_id, directly or transitively."""
+    dependents: dict[str, list[str]] = {}
+    for t in tasks:
+        for dep in json.loads(t.get("depends_on") or "[]"):
+            dependents.setdefault(dep, []).append(t["id"])
+    found, stack = set(), [root_id]
+    while stack:
+        for child in dependents.get(stack.pop(), []):
+            if child not in found:
+                found.add(child)
+                stack.append(child)
+    return found
 
 
 async def handle_plan_command(goal: str) -> None:
@@ -178,9 +282,12 @@ def _print_final_summary(progress: dict[str, int]) -> None:
     failed    = progress.get("failed", 0)
     blocked   = progress.get("blocked", 0)
     skipped   = progress.get("skipped", 0)
+    replaced  = progress.get("replaced", 0)
 
     if failed == 0 and blocked == 0:
         console.print(f"\n[bold green]🎉 All {completed} tasks completed successfully![/bold green]")
+        if replaced:
+            console.print(f"[dim]  ({replaced} task(s) were replaced by a revised plan along the way)[/dim]")
     else:
         console.print(f"\n[bold yellow]⚠ Execution finished with issues:[/bold yellow]")
         console.print(f"  ✅ Completed: {completed}")

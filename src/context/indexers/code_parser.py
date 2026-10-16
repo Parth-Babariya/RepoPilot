@@ -191,7 +191,8 @@ MAX_FILE_BYTES = 500_000
 
 def _is_eval_questions_file(path: Path) -> bool:
   questions_file = config.get("eval", {}).get("questions_file", "evals/questions.yaml")
-  normalised = str(path).replace("\\", "/").lower()
+  # leading "/" so a relative path ("evals/questions.yaml" itself) matches too
+  normalised = "/" + str(path).replace("\\", "/").lower()
   return normalised.endswith("/" + questions_file.replace("\\", "/").lower().removeprefix("./"))
 
 
@@ -216,7 +217,7 @@ def is_indexable(path: str | Path, root: str | Path | None = None, skip_dirs: se
           parts = path.relative_to(root).parts
       except ValueError:
           pass
-  if any(part in (skip_dirs or SKIP_DIRS) for part in parts):
+  if any(part in (skip_dirs or SKIP_DIRS) or part.endswith(".egg-info") for part in parts):
       return False
   try:
       return path.stat().st_size <= MAX_FILE_BYTES

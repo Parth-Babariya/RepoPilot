@@ -2,6 +2,7 @@ import asyncio
 
 from repopilot.evaluation import judge
 from repopilot.evaluation.judge import JudgeVerdict, judge_answer
+from repopilot.evaluation.judge_check import agreement, cohen_kappa
 from repopilot.evaluation.metrics import EvalQuestion
 
 
@@ -46,3 +47,27 @@ def test_judge_clamps_scores_and_handles_no_evidence(monkeypatch):
 
     assert (result.faithfulness, result.correctness) == (1.0, 0.0)
     assert "(nothing retrieved)" in prompt
+
+
+# ── /judge_check: judge vs human agreement ──────────────────────
+
+def test_cohen_kappa():
+    assert cohen_kappa([(True, True), (False, False)]) == 1.0           # perfect agreement
+    assert cohen_kappa([(True, False), (False, True)]) == -1.0          # always opposite
+    assert cohen_kappa([(True, True), (True, True)]) is None            # no variation → undefined
+    assert cohen_kappa([]) is None
+
+
+def test_agreement_thresholds_judge_scores_and_lists_disagreements():
+    results = [
+        {"id": "q1", "correctness": 0.9},
+        {"id": "q2", "correctness": 0.2},
+        {"id": "q3", "correctness": 0.8},
+        {"id": "q4", "correctness": 0.7},     # not labelled → ignored
+    ]
+    labels = {"q1": {"correctness": True}, "q2": {"correctness": False}, "q3": {"correctness": False}}
+
+    stats = agreement(results, labels, "correctness")
+    assert stats["n"] == 3
+    assert stats["agreement"] == 2 / 3
+    assert stats["disagreements"] == [{"id": "q3", "judge": 0.8, "human": False}]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from repopilot.tasks.planner import ExecutionPlan, PlannedTask
@@ -8,18 +9,22 @@ from repopilot.tasks.planner import ExecutionPlan, PlannedTask
 console = Console()
 
 
-def present_plan_for_approval(plan: ExecutionPlan) -> ExecutionPlan | None:
+def present_plan_for_approval(plan: ExecutionPlan, title: str = "Plan",
+                              reject_label: str = "[R]eject and re-plan") -> ExecutionPlan | None:
     """
     Render the plan as a Rich table and prompt the user to:
       [A] Approve — returns the plan as-is
-      [M] Modify  — edit a task description in-place and re-render
+      [M] Modify  — edit a task's description or verify command and re-render
       [R] Reject  — returns None so the caller re-plans with feedback
+
+    Approving also approves each task's verify command: those run without a
+    further prompt, so they are listed explicitly and can be edited or removed.
 
     Loop continues until the user approves or rejects.
     """
     while True:
-        _render_plan(plan)
-        choice = input("\n[A]pprove / [M]odify task / [R]eject and re-plan: ").strip().upper()
+        _render_plan(plan, title)
+        choice = input(f"\n[A]pprove / [M]odify task / {reject_label}: ").strip().upper()
 
         if choice == "A":
             return plan
@@ -30,11 +35,7 @@ def present_plan_for_approval(plan: ExecutionPlan) -> ExecutionPlan | None:
             if not task:
                 console.print(f"[red]Task '{task_id}' not found.[/red]")
                 continue
-            console.print(f"\nCurrent description:\n{task.description}\n")
-            new_desc = input("New description: ").strip()
-            if new_desc:
-                task.description = new_desc
-            console.print("[green]Task updated.[/green]")
+            _modify_task(task)
 
         elif choice == "R":
             return None
@@ -43,10 +44,27 @@ def present_plan_for_approval(plan: ExecutionPlan) -> ExecutionPlan | None:
             console.print("[yellow]Please enter A, M, or R.[/yellow]")
 
 
-def _render_plan(plan: ExecutionPlan) -> None:
-    console.print(f"\n[bold blue]Plan: {plan.project_name}[/bold blue]")
-    console.print(f"[dim]{plan.goal_summary}[/dim]")
-    console.print(f"[dim]Stack: {', '.join(plan.tech_stack)} | Est: {plan.total_estimated_hours}h[/dim]\n")
+def _modify_task(task: PlannedTask) -> None:
+    console.print(f"\nCurrent description:\n{escape(task.description)}\n")
+    new_desc = input("New description (Enter to keep): ").strip()
+    if new_desc:
+        task.description = new_desc
+
+    console.print(f"Current verify command: {escape(task.verify_command) or '(none)'}")
+    new_cmd = input("New verify command (Enter to keep, '-' to remove): ").strip()
+    if new_cmd == "-":
+        task.verify_command = ""
+    elif new_cmd:
+        task.verify_command = new_cmd
+    console.print("[green]Task updated.[/green]")
+
+
+def _render_plan(plan: ExecutionPlan, title: str) -> None:
+    console.print(f"\n[bold blue]{escape(title)}: {escape(plan.project_name)}[/bold blue]")
+    console.print(f"[dim]{escape(plan.goal_summary)}[/dim]")
+    if plan.tech_stack:
+        console.print(f"[dim]Stack: {escape(', '.join(plan.tech_stack))} | Est: {plan.total_estimated_hours}h[/dim]")
+    console.print()
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("ID",          style="dim",    width=12)
@@ -59,14 +77,20 @@ def _render_plan(plan: ExecutionPlan) -> None:
         table.add_row(
             task.id,
             task.task_type.value,
-            task.title,
+            escape(task.title),
             ", ".join(task.depends_on) or "—",
-            "\n".join(task.output_files) or "—",
+            escape("\n".join(task.output_files)) or "—",
         )
 
     console.print(table)
 
+    checks = [t for t in plan.tasks if t.verify_command.strip()]
+    if checks:
+        console.print("\n[bold]Verify commands[/bold] [dim](run after each task — approving the plan allows them)[/dim]")
+        for task in checks:
+            console.print(f"  {task.id}: [cyan]{escape(task.verify_command)}[/cyan]")
+
     if plan.risks:
         console.print("\n[yellow]Risks:[/yellow]")
         for r in plan.risks:
-            console.print(f"  • {r}")
+            console.print(f"  • {escape(r)}")

@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.markup import escape
-from rich.prompt import Prompt
+from rich.prompt import Confirm, Prompt
 
 from repopilot.config import config
 from repopilot.context.indexers.factory import get_indexer, get_index_inspector
@@ -22,10 +22,12 @@ from repopilot.observability.logger import enable_file_logging, get_logger
 from repopilot.observability.usage import track
 from repopilot.observability.stats import show_stats
 from repopilot.evaluation.runner import run_eval
+from repopilot.evaluation.judge_check import run_judge_check
 
 from repopilot.tasks.orchestrator import handle_plan_command
 from repopilot.tasks.status import show_task_status
 from repopilot.context.indexers.watcher import start_watcher, stop_watcher
+from repopilot.tools.safety import set_confirm_handler
 
 # .env lives in the project root (next to pyproject.toml) and wins over keys
 # already set in Windows/shell environment variables.
@@ -46,6 +48,7 @@ COMMANDS = [
     ("/task_status",         "show task progress for the latest project"),
     ("/stats",               "show token usage, cost and cache hit rate"),
     ("/eval [file]",         "score answer quality on a question set"),
+    ("/judge_check [file]",  "label eval answers yourself and see how far the LLM judge agrees"),
     ("/show_index",          "show all chunks in the index"),
     ("/reindex",             "manually re-index current directory"),
     ("/new_session",         "start a fresh conversation"),
@@ -67,6 +70,23 @@ def print_answer(result: QueryResult) -> None:
         for line in format_sources(result.sources):
             console.print(f"[dim]  • {line}[/dim]", highlight=False)
     console.print()
+
+
+def confirm_command(status=None):
+    """
+    Approval prompt for agent commands that aren't on the safety allowlist.
+    Pauses the "Searching..." spinner (if any) while the user answers.
+    """
+    def ask(prompt: str) -> bool:
+        if status is not None:
+            status.stop()
+        try:
+            console.print()
+            return Confirm.ask(f"[yellow]{escape(prompt)}[/yellow]", default=False)
+        finally:
+            if status is not None:
+                status.start()
+    return ask
 
 
 def print_help() -> None:
@@ -165,11 +185,15 @@ async def _run_async():
                 elif user_input.startswith("/ask "):
                     question = user_input.removeprefix("/ask ").strip()
                     logger.info(f"Ask command received: {question}")
-                    with track("ask", session_id), console.status("[dim]Searching the codebase...[/dim]"):
-                        result = await handle_query(
-                            agent, question, session_id,
-                            semantic_cache=semantic_cache, cache_domain=cache_domain,
-                        )
+                    with track("ask", session_id), console.status("[dim]Searching the codebase...[/dim]") as status:
+                        set_confirm_handler(confirm_command(status))
+                        try:
+                            result = await handle_query(
+                                agent, question, session_id,
+                                semantic_cache=semantic_cache, cache_domain=cache_domain,
+                            )
+                        finally:
+                            set_confirm_handler(None)
                     print_answer(result)
                 elif user_input == "/reindex":
                     console.print("[dim]Re-indexing current directory...[/dim]")
@@ -193,8 +217,12 @@ async def _run_async():
                 elif user_input.startswith("/plan "):
                     goal = user_input.removeprefix("/plan ").strip()
                     logger.info(f"Plan command received: {goal}")
-                    with track("plan", session_id):
-                        await handle_plan_command(goal)
+                    set_confirm_handler(confirm_command())
+                    try:
+                        with track("plan", session_id):
+                            await handle_plan_command(goal)
+                    finally:
+                        set_confirm_handler(None)
                 elif user_input == "/task_status":
                     show_task_status()
                 elif user_input == "/stats":
@@ -202,6 +230,8 @@ async def _run_async():
                 elif user_input == "/eval" or user_input.startswith("/eval "):
                     questions_file = user_input.removeprefix("/eval").strip() or None
                     await run_eval(agent, questions_file)
+                elif user_input == "/judge_check" or user_input.startswith("/judge_check "):
+                    run_judge_check(user_input.removeprefix("/judge_check").strip() or None)
                 elif user_input == "/help":
                     print_help()
                 else:

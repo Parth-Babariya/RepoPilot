@@ -106,10 +106,10 @@
   expected_files: [skills/skill_tools.py]
   expected_facts: [load_skill, build_skills_prompt]
 
-- id: blocked_commands
-  question: Which shell commands is the agent not allowed to run?
-  expected_files: [tools/terminal_tools.py]
-  expected_facts: [_BLOCKED_COMMANDS]
+- id: command_safety
+  question: Which shell commands can an agent run without asking the user first?
+  expected_files: [tools/safety.py]
+  expected_facts: [classify_command, allowlist]
 
 - id: usage_cost
   question: How is the cost of a model call calculated for /stats?

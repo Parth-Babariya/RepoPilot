@@ -44,8 +44,8 @@ class RecoveryManager:
                                started_at  = NULL,
                                retry_count = retry_count + 1,
                                error       = 'CRASH: process died mid-execution'
-                           WHERE id = ?""",
-                        (task["id"],)
+                           WHERE project_id = ? AND id = ?""",
+                        (project_id, task["id"])
                     )
                     console.print(
                         f"[yellow]🔄 Recovered:[/yellow] {task['id']} ({task['title']}) "
@@ -56,8 +56,8 @@ class RecoveryManager:
                         """UPDATE tasks
                            SET status = 'failed',
                                error  = 'CRASH: max retries exceeded after repeated crashes'
-                           WHERE id = ?""",
-                        (task["id"],)
+                           WHERE project_id = ? AND id = ?""",
+                        (project_id, task["id"])
                     )
                     console.print(f"[red]❌ Max retries exhausted:[/red] {task['id']} → FAILED")
 

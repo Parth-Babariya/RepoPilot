@@ -22,8 +22,9 @@ class TaskStatus(str, Enum):
         PENDING ──(claim)──► IN_PROGRESS ──(success)──► COMPLETED  (terminal)
                                     │
                                     ├──(failure, retries left)──► PENDING
-                                    ├──(failure, no retries)────► FAILED
-                                    └──(dep failed)─────────────► BLOCKED
+                                    └──(failure, no retries)────► FAILED
+        PENDING ──(dep failed)──► BLOCKED
+        FAILED / BLOCKED / PENDING ──(approved re-plan)──► REPLACED  (terminal)
         SKIPPED  (terminal — human explicitly skipped)
     """
     PENDING     = "pending"
@@ -32,6 +33,7 @@ class TaskStatus(str, Enum):
     FAILED      = "failed"
     BLOCKED     = "blocked"
     SKIPPED     = "skipped"
+    REPLACED    = "replaced"   # superseded by tasks from an approved re-plan
 
 
 class TaskType(str, Enum):
@@ -59,6 +61,7 @@ class Task:
     status: str               = TaskStatus.PENDING
     depends_on: str           = "[]"   # JSON list of task IDs that must complete first
     output_files: str         = "[]"   # JSON list of file paths this task will produce
+    verify_command: str | None = None  # shell command that must exit 0 for the task to pass
     result: str | None        = None   # agent's summary output on success
     error: str | None         = None   # error message on failure or crash
     retry_count: int          = 0
@@ -67,6 +70,43 @@ class Task:
     created_at: float         = field(default_factory=time.time)
     started_at: float | None  = None
     completed_at: float | None = None
+
+
+_PROJECTS_TABLE = """
+CREATE TABLE IF NOT EXISTS projects (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    goal        TEXT NOT NULL,
+    plan_json   TEXT,
+    status      TEXT DEFAULT 'planning',
+    created_at  REAL DEFAULT (unixepoch()),
+    approved_at REAL
+);
+"""
+
+_TASKS_TABLE = """
+CREATE TABLE IF NOT EXISTS tasks (
+    id                   TEXT NOT NULL,
+    project_id           TEXT REFERENCES projects(id),
+    title                TEXT NOT NULL,
+    description          TEXT NOT NULL,
+    task_type            TEXT NOT NULL,
+    status               TEXT DEFAULT 'pending',
+    depends_on           TEXT DEFAULT '[]',
+    output_files         TEXT DEFAULT '[]',
+    acceptance_criteria  TEXT DEFAULT '[]',
+    verify_command       TEXT,
+    result               TEXT,
+    error                TEXT,
+    retry_count          INTEGER DEFAULT 0,
+    max_retries          INTEGER DEFAULT 3,
+    execution_order      INTEGER DEFAULT 0,
+    created_at           REAL DEFAULT (unixepoch()),
+    started_at           REAL,
+    completed_at         REAL,
+    PRIMARY KEY (project_id, id)
+);
+"""
 
 
 class SQLiteTaskStore:
@@ -82,7 +122,8 @@ class SQLiteTaskStore:
 
     DB layout:
         projects table  — one row per /plan invocation
-        tasks table     — 10-40 rows per project, one per subtask
+        tasks table     — 10-40 rows per project, one per subtask, keyed by
+                          (project_id, id): every plan numbers its tasks task_001…
     """
 
     def __init__(self, db_path: str = ".repopilot/tasks.db") -> None:
@@ -112,40 +153,31 @@ class SQLiteTaskStore:
 
     def _setup_db(self) -> None:
         with self._conn() as conn:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS projects (
-                    id          TEXT PRIMARY KEY,
-                    name        TEXT NOT NULL,
-                    goal        TEXT NOT NULL,
-                    plan_json   TEXT,
-                    status      TEXT DEFAULT 'planning',
-                    created_at  REAL DEFAULT (unixepoch()),
-                    approved_at REAL
-                );
+            conn.executescript(_PROJECTS_TABLE + _TASKS_TABLE)
+            self._migrate(conn)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id, status)")
 
-                CREATE TABLE IF NOT EXISTS tasks (
-                    id               TEXT PRIMARY KEY,
-                    project_id       TEXT REFERENCES projects(id),
-                    title            TEXT NOT NULL,
-                    description      TEXT NOT NULL,
-                    task_type        TEXT NOT NULL,
-                    status           TEXT DEFAULT 'pending',
-                    depends_on           TEXT DEFAULT '[]',
-                    output_files         TEXT DEFAULT '[]',
-                    acceptance_criteria  TEXT DEFAULT '[]',
-                    result           TEXT,
-                    error            TEXT,
-                    retry_count      INTEGER DEFAULT 0,
-                    max_retries      INTEGER DEFAULT 3,
-                    execution_order  INTEGER DEFAULT 0,
-                    created_at       REAL DEFAULT (unixepoch()),
-                    started_at       REAL,
-                    completed_at     REAL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_tasks_project
-                    ON tasks(project_id, status);
-            """)
+    @staticmethod
+    def _migrate(conn) -> None:
+        """
+        Upgrade databases created by older versions:
+          - task id alone was the primary key, so a second /plan in the same
+            folder failed (every plan numbers its tasks task_001…). Rebuild the
+            table keyed by (project_id, id), keeping all rows.
+          - add columns introduced later.
+        """
+        columns = {row["name"]: row["pk"] for row in conn.execute("PRAGMA table_info(tasks)")}
+        if columns.get("project_id", 0) == 0:
+            logger.info("Migrating tasks table to per-project task ids")
+            conn.execute("ALTER TABLE tasks RENAME TO tasks_old")
+            conn.execute("DROP INDEX IF EXISTS idx_tasks_project")
+            conn.executescript(_TASKS_TABLE)
+            new_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+            shared = ", ".join(c for c in columns if c in new_columns)
+            conn.execute(f"INSERT INTO tasks ({shared}) SELECT {shared} FROM tasks_old")
+            conn.execute("DROP TABLE tasks_old")
+        elif "verify_command" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN verify_command TEXT")
 
     # ------------------------------------------------------------------
     # Project operations
@@ -162,23 +194,45 @@ class SQLiteTaskStore:
                 "INSERT INTO projects(id, name, goal, plan_json, status) VALUES (?,?,?,?,?)",
                 (project_id, plan.project_name, goal, plan.model_dump_json(), "approved")
             )
-            for i, pt in enumerate(plan.tasks):
-                conn.execute(
-                    """INSERT INTO tasks
-                       (id, project_id, title, description, task_type,
-                        depends_on, output_files, acceptance_criteria, execution_order)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
-                    (
-                        pt.id, project_id, pt.title, pt.description,
-                        pt.task_type.value,
-                        json.dumps(pt.depends_on),
-                        json.dumps(pt.output_files),
-                        json.dumps(pt.acceptance_criteria),
-                        i,
-                    )
-                )
+            self._insert_tasks(conn, project_id, plan.tasks, first_order=0)
         logger.info(f"Project {project_id} created with {len(plan.tasks)} tasks")
         return project_id
+
+    @staticmethod
+    def _insert_tasks(conn, project_id: str, planned_tasks, first_order: int) -> None:
+        for i, pt in enumerate(planned_tasks):
+            conn.execute(
+                """INSERT INTO tasks
+                   (id, project_id, title, description, task_type, depends_on,
+                    output_files, acceptance_criteria, verify_command, execution_order)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    pt.id, project_id, pt.title, pt.description,
+                    pt.task_type.value,
+                    json.dumps(pt.depends_on),
+                    json.dumps(pt.output_files),
+                    json.dumps(pt.acceptance_criteria),
+                    (getattr(pt, "verify_command", None) or "").strip() or None,
+                    first_order + i,
+                )
+            )
+
+    def apply_replan(self, project_id: str, replaced_ids: list[str], new_tasks, reason: str) -> None:
+        """
+        Swap in an approved re-plan, atomically: the tasks being replaced become
+        REPLACED (kept for the record) and the new tasks are appended as PENDING.
+        """
+        with self._conn() as conn:
+            for task_id in replaced_ids:
+                conn.execute(
+                    "UPDATE tasks SET status='replaced', error=? WHERE project_id=? AND id=?",
+                    (f"Replaced by re-plan: {reason}", project_id, task_id),
+                )
+            last = conn.execute(
+                "SELECT COALESCE(MAX(execution_order), -1) FROM tasks WHERE project_id=?", (project_id,)
+            ).fetchone()[0]
+            self._insert_tasks(conn, project_id, new_tasks, first_order=last + 1)
+        logger.info(f"Project {project_id} re-planned: replaced {replaced_ids}, added {[t.id for t in new_tasks]}")
 
     def get_latest_approved_project(self) -> str | None:
         """
@@ -217,7 +271,7 @@ class SQLiteTaskStore:
     # Atomic state transitions
     # ------------------------------------------------------------------
 
-    def claim_task(self, task_id: str) -> bool:
+    def claim_task(self, project_id: str, task_id: str) -> bool:
         """
         Atomically transition a task from PENDING → IN_PROGRESS.
         Returns True if the claim succeeded, False if already claimed.
@@ -227,24 +281,24 @@ class SQLiteTaskStore:
                 """UPDATE tasks
                    SET status     = 'in_progress',
                        started_at = unixepoch()
-                   WHERE id = ? AND status = 'pending'""",
-                (task_id,)
+                   WHERE project_id = ? AND id = ? AND status = 'pending'""",
+                (project_id, task_id)
             )
         return cur.rowcount == 1
 
-    def complete_task(self, task_id: str, result: str) -> None:
+    def complete_task(self, project_id: str, task_id: str, result: str) -> None:
         with self._conn() as conn:
             conn.execute(
                 """UPDATE tasks
                    SET status       = 'completed',
                        result       = ?,
                        completed_at = unixepoch()
-                   WHERE id = ?""",
-                (result, task_id)
+                   WHERE project_id = ? AND id = ?""",
+                (result, project_id, task_id)
             )
         logger.info(f"Task {task_id} completed")
 
-    def fail_task(self, task_id: str, error: str) -> None:
+    def fail_task(self, project_id: str, task_id: str, error: str) -> None:
         """
         Record failure and apply retry logic in a single atomic UPDATE.
         SQL CASE: retries left → 'pending', exhausted → 'failed'.
@@ -259,16 +313,16 @@ class SQLiteTaskStore:
                            ELSE 'failed'
                        END,
                        started_at  = NULL
-                   WHERE id = ?""",
-                (error, task_id)
+                   WHERE project_id = ? AND id = ?""",
+                (error, project_id, task_id)
             )
         logger.info(f"Task {task_id} failed: {error[:80]}")
 
-    def block_task(self, task_id: str, reason: str) -> None:
+    def block_task(self, project_id: str, task_id: str, reason: str) -> None:
         with self._conn() as conn:
             conn.execute(
-                "UPDATE tasks SET status='blocked', error=? WHERE id=?",
-                (reason, task_id)
+                "UPDATE tasks SET status='blocked', error=? WHERE project_id=? AND id=?",
+                (reason, project_id, task_id)
             )
 
     def block_unreachable_tasks(self, project_id: str) -> int:
@@ -291,7 +345,7 @@ class SQLiteTaskStore:
             if not newly:
                 return blocked_total
             for task_id, reason in newly:
-                self.block_task(task_id, reason)
+                self.block_task(project_id, task_id, reason)
                 logger.info(f"Task {task_id} blocked — {reason}")
             blocked_total += len(newly)
 
@@ -321,20 +375,21 @@ class SQLiteTaskStore:
                 ready.append(dict(row))
         return ready
 
-    # checking if dependents of task are done - true or false
+    # checking if dependencies of a task are done - true or false
     def _all_deps_done(self, project_id: str, dep_ids: list[str]) -> bool:
+        dep_ids = sorted(set(dep_ids))
         if not dep_ids:
             return True
         placeholders = ",".join(["?"] * len(dep_ids))
         with self._conn() as conn:
             row = conn.execute(
                 f"""SELECT COUNT(*) FROM tasks
-                    WHERE id IN ({placeholders})
-                      AND status NOT IN ('completed', 'skipped')""",
-                dep_ids
+                    WHERE project_id = ? AND id IN ({placeholders})
+                      AND status IN ('completed', 'skipped')""",
+                [project_id, *dep_ids]
             ).fetchone()
-        # no of dependents that are not completed/skipped should be 0
-        return row[0] == 0
+        # every dependency must exist and be done — a missing id never counts as done
+        return row[0] == len(dep_ids)
 
     def get_all_tasks(self, project_id: str) -> list[dict]:
         with self._conn() as conn:
@@ -352,7 +407,7 @@ class SQLiteTaskStore:
             ).fetchall()
         return {r["status"]: r["n"] for r in rows}
 
-    def get_dep_results(self, dep_ids: list[str]) -> list[dict]:
+    def get_dep_results(self, project_id: str, dep_ids: list[str]) -> list[dict]:
         """
         Fetch title + result of completed dependency tasks.
         Injected into each agent's system prompt so it knows what prior tasks produced.
@@ -363,8 +418,8 @@ class SQLiteTaskStore:
         with self._conn() as conn:
             rows = conn.execute(
                 f"""SELECT id, title, result FROM tasks
-                    WHERE id IN ({placeholders})
+                    WHERE project_id = ? AND id IN ({placeholders})
                       AND status = 'completed'""",
-                dep_ids,
+                [project_id, *dep_ids],
             ).fetchall()
         return [dict(r) for r in rows]

@@ -22,6 +22,8 @@ def get_retriever():
        from .hybrid_qdrant import retrieve
    elif provider == "qdrant":
        from .semantic_qdrant import retrieve
+   elif mode == "hybrid":
+       from .hybrid_chroma import retrieve      # vector + BM25 keyword search, fused
    else:
        from .semantic_chroma import retrieve
 

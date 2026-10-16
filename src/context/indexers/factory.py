@@ -12,6 +12,12 @@ logger = get_logger(__name__)
 # updates both. A symbol-index failure is logged but never breaks
 # vector indexing.
 
+def _index_changed() -> None:
+   # The in-memory BM25 keyword index (hybrid search) is rebuilt on next use
+   from repopilot.context.retrievers import bm25
+   bm25.invalidate()
+
+
 def _sync_symbols(action, *args) -> None:
    from repopilot.context.symbol_index import symbols_enabled
    if not symbols_enabled():
@@ -39,6 +45,7 @@ def get_indexer():
        from repopilot.context.symbol_index import update_symbol_index
        with track("index"):
            result = index_codebase(repo_path)
+       _index_changed()
        _sync_symbols(update_symbol_index, repo_path)
        return result
 
@@ -67,12 +74,14 @@ def get_file_indexer():
        from repopilot.context.symbol_index import get_symbol_store
        with track("index"):
            index_single_file(filepath)
+       _index_changed()
        _sync_symbols(lambda: get_symbol_store().index_file(filepath))
 
 
    def remove_file(filepath: str) -> None:
        from repopilot.context.symbol_index import get_symbol_store
        remove_file_from_index(filepath)
+       _index_changed()
        _sync_symbols(lambda: get_symbol_store().remove_file(filepath))
 
 

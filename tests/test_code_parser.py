@@ -29,3 +29,18 @@ def test_empty_files_are_skipped_quietly(tmp_path):
         path = tmp_path / name
         path.write_text("  \n", encoding="utf-8")
         assert parse_file(str(path)) == []
+
+
+def test_eval_answers_and_build_metadata_are_not_indexed(tmp_path, monkeypatch):
+    from repopilot.context.indexers.code_parser import get_source_files
+
+    (tmp_path / "evals").mkdir()
+    (tmp_path / "evals" / "questions.yaml").write_text("- question: q\n")
+    (tmp_path / "pkg.egg-info").mkdir()
+    (tmp_path / "pkg.egg-info" / "requires.txt").write_text("x\n")
+    (tmp_path / "app.py").write_text("x = 1\n")
+
+    monkeypatch.chdir(tmp_path)
+    for root in (".", str(tmp_path)):          # relative and absolute roots behave the same
+        files = {p.replace("\\", "/").rsplit("/", 1)[-1] for p in get_source_files(root)}
+        assert files == {"app.py"}
