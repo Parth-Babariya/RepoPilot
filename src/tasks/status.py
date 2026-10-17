@@ -1,21 +1,22 @@
 from __future__ import annotations
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from repopilot.config import config
-from repopilot.tasks.task_store import SQLiteTaskStore
+from repopilot.tasks.task_store import SQLiteTaskStore, TaskStatus
 
 console = Console()
 
+# Keyed by TaskStatus; a test checks every status has a style
 _STATUS_STYLE = {
-    "completed":   "green",
-    "failed":      "red",
-    "in_progress": "yellow",
-    "pending":     "dim",
-    "blocked":     "red",
-    "skipped":     "dim",
-    "replaced":    "dim",
+    TaskStatus.COMPLETED:   "green",
+    TaskStatus.FAILED:      "red",
+    TaskStatus.IN_PROGRESS: "yellow",
+    TaskStatus.PENDING:     "dim",
+    TaskStatus.BLOCKED:     "red",
+    TaskStatus.REPLACED:    "dim",
 }
 
 
@@ -33,11 +34,13 @@ def show_task_status() -> None:
 
     tasks    = store.get_all_tasks(project_id)
     progress = store.get_progress(project_id)
-    total    = sum(progress.values())
+    replaced = progress.get("replaced", 0)
+    total    = sum(progress.values()) - replaced   # replaced tasks are history, not work left
     done     = progress.get("completed", 0)
 
-    console.print(f"\n[bold]Project:[/bold] {project['name']} [dim]({project_id} · {project['status']})[/dim]")
-    console.print(f"[dim]Progress: {done}/{total} completed[/dim]\n")
+    console.print(f"\n[bold]Project:[/bold] {escape(project['name'])} [dim]({project_id} · {project['status']})[/dim]")
+    console.print(f"[dim]Progress: {done}/{total} completed"
+                  + (f" · {replaced} replaced by a revised plan" if replaced else "") + "[/dim]\n")
 
     table = Table(show_header=True, header_style="bold")
     table.add_column("#",       width=4)
@@ -49,16 +52,16 @@ def show_task_status() -> None:
     table.add_column("Error",   width=40)
 
     for i, task in enumerate(tasks, 1):
-        style  = _STATUS_STYLE.get(task["status"], "")
+        style  = _STATUS_STYLE.get(task["status"], "default")
         error  = (task.get("error") or "")[:60]
         table.add_row(
             str(i),
             task["id"],
             task["task_type"],
-            task["title"],
+            escape(task["title"]),
             f"[{style}]{task['status']}[/{style}]",
             f"{task['retry_count']}/{task['max_retries']}",
-            error,
+            escape(error),   # escape(): "[task_001]" etc. would otherwise be read as Rich markup
         )
 
     console.print(table)

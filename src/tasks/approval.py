@@ -90,6 +90,13 @@ def _render_plan(plan: ExecutionPlan, title: str) -> None:
         for task in checks:
             console.print(f"  {task.id}: [cyan]{escape(task.verify_command)}[/cyan]")
 
+    # Assumptions are the planner's guesses about what you want — the part of the
+    # plan most worth checking before approving.
+    if plan.assumptions:
+        console.print("\n[cyan]Assumptions (check these):[/cyan]")
+        for a in plan.assumptions:
+            console.print(f"  • {escape(a)}")
+
     if plan.risks:
         console.print("\n[yellow]Risks:[/yellow]")
         for r in plan.risks:

@@ -116,3 +116,14 @@ def test_mcp_tools_refuse_secret_paths():
     assert "contents of src/app.py" in asyncio.run(guarded.ainvoke({"path": "src/app.py"}))
     assert "secret" in asyncio.run(guarded.ainvoke({"path": "/repo/.env"}))
     assert calls == ["src/app.py"]
+
+
+def test_run_command_tool_takes_an_optional_directory(in_project):
+    from repopilot.tools.terminal_tools import run_command
+    (in_project / "sub").mkdir()
+    (in_project / "sub" / "marker.txt").write_text("x")
+
+    assert "marker.txt" in run_command.invoke({"command": "dir" if sys.platform == "win32" else "ls",
+                                               "directory": "sub"})
+    assert "does not exist" in run_command.invoke({"command": "ls", "directory": "nope"})
+    assert "outside the project" in run_command.invoke({"command": "ls", "directory": ".."})

@@ -2,7 +2,8 @@ embeddings:
  # Free, local (fastembed — downloaded once, no API key). bge-small matched bge-base's
  # accuracy on evals/questions.yaml and indexes ~3x faster (see rag: below for current numbers).
  # Switching model builds a fresh index automatically (one collection per model).
- provider: fastembed      # fastembed | openai | huggingface
+ # fastembed runs Hugging Face models (BGE, Jina, …) via ONNX — no PyTorch needed.
+ provider: fastembed      # fastembed | openai
  model: BAAI/bge-small-en-v1.5
  # Paid OpenAI setup:
  #   provider: openai
@@ -49,6 +50,8 @@ llm:
  #   judge_model: gpt-4o-mini
 
 skills:
+ # Built-in skills (trace_flow, review_code, debug_error) always load. Put your own in
+ # <skills_dir>/<name>/SKILL.md in the analysed repo — a same-named skill overrides a built-in.
  skills_dir: .repopilot/skills
 
 memory:
@@ -68,8 +71,9 @@ rag:
  mode: semantic           # semantic | hybrid
 
 vector_store:
+ # chroma: local, stored in the repo's .repopilot/ (default) · qdrant: a server or Qdrant Cloud
+ # (QDRANT_URL in .env). Both support rag.mode semantic and hybrid without re-indexing.
  provider: chroma         # chroma | qdrant
- retrieval_mode: hybrid   # dense | sparse | hybrid (used when rag.mode is hybrid and provider is qdrant)
 
 rerank:
  # On evals/questions.yaml it ranks the right file higher (MRR 0.62 → 0.66 with bge-small) but

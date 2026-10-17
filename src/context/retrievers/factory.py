@@ -14,18 +14,12 @@ def get_retriever():
    rerank.enabled is true, it over-fetches and reranks with a cross-encoder
    (see reranker.py) — used by both /ask and /eval.
    """
-   mode = config["rag"]["mode"]
-   provider = config["vector_store"]["provider"]
-
-
-   if mode == "hybrid" and provider == "qdrant":
-       from .hybrid_qdrant import retrieve
-   elif provider == "qdrant":
-       from .semantic_qdrant import retrieve
-   elif mode == "hybrid":
-       from .hybrid_chroma import retrieve      # vector + BM25 keyword search, fused
+   # The store decides *where* to search; each store module reads rag.mode
+   # itself to decide *how* (vector only, or vector + BM25 keyword search).
+   if config["vector_store"]["provider"] == "qdrant":
+       from .qdrant import retrieve
    else:
-       from .semantic_chroma import retrieve
+       from .chroma import retrieve
 
 
    if rerank_config()["enabled"]:

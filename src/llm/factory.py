@@ -99,11 +99,10 @@ def get_embedder():
   logger.info(f"Using embeddings provider: {provider}, model: {model}")
   if provider == "fastembed":
       return TrackedEmbeddings(_local_embeddings(model), model)
-  if provider == "huggingface":
-      from langchain_huggingface import HuggingFaceEmbeddings
-      return TrackedEmbeddings(HuggingFaceEmbeddings(model_name=model), model)
-  from langchain_openai import OpenAIEmbeddings
-  return TrackedEmbeddings(OpenAIEmbeddings(model=model), model)
+  if provider == "openai":
+      from langchain_openai import OpenAIEmbeddings
+      return TrackedEmbeddings(OpenAIEmbeddings(model=model), model)
+  raise ValueError(f"Unknown embeddings.provider '{provider}' in config.yaml (use fastembed or openai)")
 
 
 def embedding_slug() -> str:

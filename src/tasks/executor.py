@@ -13,7 +13,6 @@ from langchain.agents import create_agent
 
 from repopilot.tools.filesystem_tools import (
     append_file,
-    file_exists,
     list_directory,
     read_file,
     write_file,
@@ -34,7 +33,7 @@ _TOOLS_BY_TYPE: dict[str, list] = {
     "test":      [read_file, write_file, append_file, list_directory, run_command],
     "review":    [read_file, write_file],
     "integrate": [read_file, write_file, append_file, list_directory, run_command],
-    "configure": [read_file, write_file, list_directory, file_exists],
+    "configure": [read_file, write_file, list_directory],
 }
 
 _DEFAULT_TOOLS = [read_file, write_file, list_directory]

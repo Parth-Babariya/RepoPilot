@@ -48,8 +48,10 @@ class SkillRegistry:
    "skill_dir" is kept so we can later discover support files inside that folder.
    """
 
-   def __init__(self, skills_dir: Path) -> None:
-       self._skills_dir = skills_dir
+   def __init__(self, skills_dirs: list[Path]) -> None:
+       # Scanned in order; a later folder's skill replaces an earlier one with the
+       # same name, so a repo's own skills can override the built-in ones.
+       self._skills_dirs = skills_dirs
        self._skills: dict[str, dict] = {}  # populated by load()
 
    # ------------------------------------------------------------------
@@ -58,16 +60,19 @@ class SkillRegistry:
 
    def load(self) -> None:
        """
-       Walk skills_dir and parse every SKILL.md found.
+       Walk every skills folder and parse each SKILL.md found.
        Called once at agent startup via get_registry() in skill_tools.py.
        Safe to call again to hot-reload if skills change on disk.
        """
        self._skills.clear()
-       if not self._skills_dir.exists():
-           logger.info(f"skills_dir not found: {self._skills_dir}. No skills loaded.")
-           return
+       for skills_dir in self._skills_dirs:
+           if skills_dir.exists():
+               self._load_dir(skills_dir)
+           else:
+               logger.info(f"Skills folder not found (skipped): {skills_dir}")
 
-       for skill_dir in self._skills_dir.iterdir():
+   def _load_dir(self, skills_dir: Path) -> None:
+       for skill_dir in skills_dir.iterdir():
            if not skill_dir.is_dir():
                continue  # skip stray files at the top level of skills_dir
 
@@ -178,7 +183,7 @@ class SkillRegistry:
            result += "\n\n--- Support Files Available ---\n"
            result += "\n".join(f"  {p}" for p in support_files)
            result += (
-               "\nYou can read any of these files using the read_file tool "
+               "\nYou can read any of these files with a file-reading tool "
                "if the skill instructions reference them."
            )
        return result

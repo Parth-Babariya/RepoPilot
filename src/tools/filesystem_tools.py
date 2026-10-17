@@ -74,22 +74,8 @@ def append_file(file_path: str, content: str) -> str:
        return f"Error: {e}"
 
 
-# @tool
-# def delete_file(file_path: str) -> str:
-#    """Delete a file."""
-#    if not file_path or not file_path.strip():
-#        return "Error: file path cannot be empty"
-#    if not os.path.exists(file_path):
-#        return f"Error: file not found: {file_path}"
-#    if not os.path.isfile(file_path):
-#        return f"Error: path is not a file (use a directory tool for directories): {file_path}"
-#    try:
-#        os.remove(file_path)
-#        return f"Deleted {file_path}"
-#    except PermissionError:
-#        return f"Error: permission denied: {file_path}"
-#    except Exception as e:
-#        return f"Error: {e}"
+# There is deliberately no delete tool: agents can create and change files,
+# but never remove them, so a bad task can't destroy existing work.
 
 
 @tool
@@ -110,15 +96,5 @@ def list_directory(directory: str) -> str:
        return f"Error: permission denied: {directory}"
    except Exception as e:
        return f"Error: {e}"
-
-
-@tool
-def file_exists(file_path: str) -> str:
-   """Check whether a file or directory exists."""
-   if not file_path or not file_path.strip():
-       return "Error: file path cannot be empty"
-   if error := check_path(file_path):
-       return error
-   return str(os.path.exists(file_path))
 
 

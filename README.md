@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-94%20passing-brightgreen)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [Configuration](#configuration) · [Evaluation](#evaluation) · [Project structure](#project-structure)
@@ -53,7 +53,8 @@ Sources:
 | **Conversation memory** | Sessions survive restarts (LangGraph + SQLite). Long conversations are summarised automatically. |
 | **Evaluation suite** | `/eval` measures retrieval (hit rate, MRR), answer faithfulness and correctness (LLM judge), latency and cost, and compares each run with the last. `/judge_check` measures how often the judge agrees with your own labels. |
 | **Cost tracking** | `/stats` shows tokens, cost and latency per feature, plus how much the cache saved. |
-| **Extensible** | The agent can use skills (`SKILL.md` files loaded on demand) and MCP servers (GitHub, filesystem). |
+| **Skills** | Step-by-step playbooks the agent loads only when a question needs one. Three are built in: `trace_flow` (how a feature works end to end), `review_code` (bugs and risks, by severity) and `debug_error` (root cause of an error or traceback). Add your own as `.repopilot/skills/<name>/SKILL.md`; a same-named skill overrides a built-in one. |
+| **Extensible** | MCP servers (GitHub, filesystem) plug straight into the agent, read-only. |
 
 ## Architecture
 
@@ -176,7 +177,7 @@ flowchart LR
 
 Vector search is fast because it compares precomputed embeddings, but it ranks roughly. A cross-encoder reads the query and each chunk together, which is more accurate but too slow to run on every chunk. So vector search narrows the code down to 20 candidates, and the cross-encoder ranks those. The reranker was chosen by benchmarking three models on the eval set.
 
-**Hybrid mode** (`rag.mode: hybrid`) adds BM25 keyword search, which matches exact identifiers such as `fail_task` (split into `fail` and `task` too). The two result lists are merged with reciprocal rank fusion, which needs only ranks, so vector distances and BM25 scores never have to be put on the same scale. It works with Chroma (an in-memory index, rebuilt when the code changes) and Qdrant (sparse vectors). On this project's eval set it didn't beat plain vector search, so it is off by default ([numbers](#retrieval-benchmark-measured)).
+**Hybrid mode** (`rag.mode: hybrid`) adds BM25 keyword search, which matches exact identifiers such as `fail_task` (split into `fail` and `task` too). The two result lists are merged with reciprocal rank fusion, which needs only ranks, so vector distances and BM25 scores never have to be put on the same scale. It works with both stores. With Chroma, the keyword index is built in memory from the stored chunks and rebuilt when the code changes. With Qdrant, every point stores a sparse BM25 vector next to its dense one. Either way, one index serves both modes, so switching `rag.mode` never needs a re-index. On this project's eval set it didn't beat plain vector search, so it is off by default ([numbers](#retrieval-benchmark-measured)).
 
 ### Indexing pipeline
 
@@ -310,7 +311,7 @@ Everything RepoPilot stores goes in `.repopilot/` inside the repo being analysed
 | `tasks.db` | `/plan` projects and tasks |
 | `usage.db` | Tokens, cost and latency of every model call |
 | `evals/` | Saved `/eval` runs and your `/judge_check` labels |
-| `skills/` | Your own skills (`SKILL.md` files), loaded on demand |
+| `skills/` | Your own skills (`<name>/SKILL.md`), loaded on demand alongside the built-in ones |
 | `logs/repopilot.log` | Detailed logs (the terminal shows only warnings) |
 
 The semantic cache lives in Redis. With Qdrant, vectors live in your Qdrant server or cloud cluster.
@@ -322,7 +323,7 @@ The semantic cache lives in Redis. With Qdrant, vectors live in your Qdrant serv
 - **A human approves every plan.** No code is written until you approve the plan, and that includes every command it will run to verify itself. A revised plan after a failure needs approval too.
 - **Evidence before opinion.** A task passes only when objective checks pass (files exist and parse, tests run green). The LLM judge then grades the real files. An agent's claim that "tests pass" counts for nothing.
 - **A failure leads to a new plan, not a dead end.** Retries learn from the failure reason. A task that keeps failing is re-planned around rather than blocking everything after it.
-- **Least privilege.** Each task type gets only the tools it needs, agents can't leave the project folder or read `.env`, unfamiliar commands need your approval, and MCP is read-only.
+- **Least privilege.** Each task type gets only the tools it needs, agents can't leave the project folder or read `.env`, unfamiliar commands need your approval, MCP is read-only, and there is no delete tool at all, so a bad task can't destroy existing work.
 - **The cache only answers when it's safe.** It is keyed on the question alone, so it is used only for the first question in a session, and it is cleared whenever the code changes.
 - **Changes are measured, not assumed.** Retrieval changes are judged on the eval set, and the results decide the defaults. Hybrid search was built and measured, didn't help on this project, and so is off by default. The LLM judge itself can be checked against human labels with `/judge_check`.
 
@@ -425,8 +426,9 @@ All settings live in [`src/config.yaml`](src/config.yaml). API keys go in `.env`
 | Section | Controls |
 |---|---|
 | `llm` | Provider (`gemini` / `openai` / `anthropic`), model, a cheaper `judge_model`, and retries for rate limits. To list the Gemini models your key can use, run `python -m repopilot.llm.list_models` |
-| `embeddings` | `fastembed` (local, free), `openai` or `huggingface`, and the model. Each model gets its own index, so switching is safe |
-| `vector_store`, `rag`, `qdrant` | Chroma or Qdrant, and vector-only or hybrid (vector + BM25) retrieval |
+| `embeddings` | `fastembed` (local and free; runs Hugging Face models like BGE without PyTorch) or `openai`, and the model. Each model gets its own index, so switching is safe |
+| `vector_store`, `qdrant` | Chroma (local, the default) or Qdrant (a server or Qdrant Cloud, via `QDRANT_URL`) |
+| `rag` | `semantic` (vector search) or `hybrid` (vector + BM25 keyword search); works with either store |
 | `rerank` | Turn reranking on or off, and choose the cross-encoder and candidate count |
 | `symbols` | Turn the call-graph tools on or off |
 | `semantic_cache` | Redis URL, similarity threshold and TTL |
@@ -503,8 +505,8 @@ repopilot/
     ├── config.yaml          all settings
     ├── agent/               /ask agent, tools, sources, query handling
     ├── context/
-    │   ├── indexers/        tree-sitter chunking, Chroma/Qdrant indexing, file watcher
-    │   ├── retrievers/      vector search, BM25 hybrid search, cross-encoder reranking
+    │   ├── indexers/        tree-sitter chunking, file watcher, one module per store (chroma, qdrant)
+    │   ├── retrievers/      search per store (semantic or hybrid), BM25, cross-encoder reranking
     │   └── symbol_index.py  symbol & call-graph index
     ├── tasks/               /plan: planner + re-planner, approval, orchestrator, executor (checks + judge), recovery
     ├── evaluation/          /eval: deterministic metrics, LLM judge, runner, /judge_check
@@ -512,7 +514,9 @@ repopilot/
     ├── llm/                 model factory (Gemini / OpenAI / Anthropic), local embeddings
     ├── cache/               Redis semantic cache
     ├── memory/              sessions and summarisation
-    └── skills/  mcp_integration/  tools/
+    ├── skills/              skill registry + built-in skills (builtin/<name>/SKILL.md)
+    ├── tools/               file and shell tools, safety policy
+    └── mcp_integration/     MCP servers (read-only)
 ```
 
 ## Tests
@@ -521,7 +525,7 @@ repopilot/
 poetry run pytest
 ```
 
-The suite covers the task store and orchestration loop, symbol extraction and call-graph queries, usage tracking, eval metrics, reranking, source formatting and code chunking. It needs no API keys.
+The suite covers the task store and orchestration loop, re-planning, verification checks, tool safety, symbol extraction and call-graph queries, hybrid search, skills, usage tracking, eval metrics and the judge, reranking, source formatting and code chunking. It needs no API keys. The Qdrant tests run only when a Qdrant server is reachable (`docker run -p 6333:6333 qdrant/qdrant`) and are skipped otherwise.
 
 ## Tech stack
 
@@ -529,6 +533,3 @@ Python · LangChain · LangGraph · Google Gemini / OpenAI / Anthropic · Chroma
 
 ---
 
-<div align="center">
-Built by <b>Parth Babariya</b>
-</div>

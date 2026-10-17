@@ -10,7 +10,7 @@ from rich.prompt import Confirm, Prompt
 
 from repopilot.config import config
 from repopilot.context.indexers.factory import get_indexer, get_index_inspector
-from repopilot.llm.factory import PROVIDER_API_KEYS, chat_provider, get_llm, get_embedder
+from repopilot.llm.factory import PROVIDER_API_KEYS, chat_provider
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from repopilot.agent.factory import build_agent
 from repopilot.memory.short_term import get_checkpointer_db_path
@@ -99,7 +99,7 @@ def check_environment() -> list[str]:
     """
     Return human-readable problems with the configuration (empty if OK), so a
     missing key fails fast with a clear message instead of mid-query.
-    Local embeddings (fastembed / huggingface) need no key.
+    Local embeddings (fastembed) need no key.
     """
     problems = []
     try:
@@ -121,9 +121,7 @@ def get_or_create_index():
 
 
 async def initialize(checkpointer):
-    """Bootstrap LLM, embedder, index, watcher, MCP tools, cache, and session before the REPL starts."""
-    llm      = get_llm()
-    embedder = get_embedder()
+    """Bootstrap the index, watcher, cache, agent (with MCP tools) and session before the REPL starts."""
     console.print(f"[dim]LLM: {config['llm']['provider']} / {config['llm']['model']}[/dim]")
     console.print(f"[dim]Embedder: {config['embeddings']['provider']} / {config['embeddings']['model']}[/dim]")
 
@@ -152,7 +150,7 @@ async def initialize(checkpointer):
     session_id = get_current_session()
     console.print(f"[dim]Session: {session_id}[/dim]")
     console.print(f"[green]✓ Ready[/green]\n")
-    return llm, embedder, index, agent, session_id, observer, semantic_cache, cache_domain
+    return index, agent, session_id, observer, semantic_cache, cache_domain
 
 
 async def _run_async():
@@ -168,7 +166,7 @@ async def _run_async():
         sys.exit(1)
 
     async with AsyncSqliteSaver.from_conn_string(get_checkpointer_db_path()) as checkpointer:
-        llm, embedder, index, agent, session_id, observer, semantic_cache, cache_domain = await initialize(checkpointer)
+        index, agent, session_id, observer, semantic_cache, cache_domain = await initialize(checkpointer)
         console.print("Type [bold]/help[/bold] for commands, [bold]/exit[/bold] to quit\n")
 
         try:

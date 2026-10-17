@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 import uuid
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
@@ -25,14 +23,15 @@ class TaskStatus(str, Enum):
                                     └──(failure, no retries)────► FAILED
         PENDING ──(dep failed)──► BLOCKED
         FAILED / BLOCKED / PENDING ──(approved re-plan)──► REPLACED  (terminal)
-        SKIPPED  (terminal — human explicitly skipped)
+
+    Dropping a task is done through an approved re-plan (it becomes REPLACED),
+    so the reason is always recorded and its dependents are re-planned too.
     """
     PENDING     = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED   = "completed"
     FAILED      = "failed"
     BLOCKED     = "blocked"
-    SKIPPED     = "skipped"
     REPLACED    = "replaced"   # superseded by tasks from an approved re-plan
 
 
@@ -45,62 +44,37 @@ class TaskType(str, Enum):
     CONFIGURE = "configure"
 
 
-@dataclass
-class Task:
-    """
-    Single unit of work inside a project.
-
-    depends_on and output_files are stored as JSON strings in SQLite
-    and converted to/from lists at the Python boundary.
-    """
-    id: str
-    project_id: str
-    title: str
-    description: str
-    task_type: str
-    status: str               = TaskStatus.PENDING
-    depends_on: str           = "[]"   # JSON list of task IDs that must complete first
-    output_files: str         = "[]"   # JSON list of file paths this task will produce
-    verify_command: str | None = None  # shell command that must exit 0 for the task to pass
-    result: str | None        = None   # agent's summary output on success
-    error: str | None         = None   # error message on failure or crash
-    retry_count: int          = 0
-    max_retries: int          = 3
-    execution_order: int      = 0      # position in plan — used for display ordering
-    created_at: float         = field(default_factory=time.time)
-    started_at: float | None  = None
-    completed_at: float | None = None
-
-
 _PROJECTS_TABLE = """
 CREATE TABLE IF NOT EXISTS projects (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     goal        TEXT NOT NULL,
-    plan_json   TEXT,
-    status      TEXT DEFAULT 'planning',
+    plan_json   TEXT,                   -- the plan exactly as the user approved it (audit record)
+    status      TEXT DEFAULT 'planning',-- approved → completed | failed | abandoned
     created_at  REAL DEFAULT (unixepoch()),
-    approved_at REAL
+    approved_at REAL                    -- when the user approved the plan
 );
 """
 
+# JSON list columns (depends_on, output_files, acceptance_criteria) are decoded
+# at the point of use; status is a TaskStatus value.
 _TASKS_TABLE = """
 CREATE TABLE IF NOT EXISTS tasks (
-    id                   TEXT NOT NULL,
+    id                   TEXT NOT NULL,          -- task_001…, unique within a project
     project_id           TEXT REFERENCES projects(id),
     title                TEXT NOT NULL,
     description          TEXT NOT NULL,
-    task_type            TEXT NOT NULL,
+    task_type            TEXT NOT NULL,          -- TaskType: decides the agent's tools
     status               TEXT DEFAULT 'pending',
-    depends_on           TEXT DEFAULT '[]',
-    output_files         TEXT DEFAULT '[]',
-    acceptance_criteria  TEXT DEFAULT '[]',
-    verify_command       TEXT,
-    result               TEXT,
-    error                TEXT,
+    depends_on           TEXT DEFAULT '[]',      -- task IDs that must complete first
+    output_files         TEXT DEFAULT '[]',      -- files the task must produce (checked)
+    acceptance_criteria  TEXT DEFAULT '[]',      -- what the judge checks
+    verify_command       TEXT,                   -- must exit 0 for the task to pass
+    result               TEXT,                   -- agent's summary, passed to dependents
+    error                TEXT,                   -- last failure reason, shown to the retry
     retry_count          INTEGER DEFAULT 0,
     max_retries          INTEGER DEFAULT 3,
-    execution_order      INTEGER DEFAULT 0,
+    execution_order      INTEGER DEFAULT 0,      -- position in the plan, for display order
     created_at           REAL DEFAULT (unixepoch()),
     started_at           REAL,
     completed_at         REAL,
@@ -191,7 +165,8 @@ class SQLiteTaskStore:
         project_id = str(uuid.uuid4())
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO projects(id, name, goal, plan_json, status) VALUES (?,?,?,?,?)",
+                "INSERT INTO projects(id, name, goal, plan_json, status, approved_at) "
+                "VALUES (?,?,?,?,?, unixepoch())",
                 (project_id, plan.project_name, goal, plan.model_dump_json(), "approved")
             )
             self._insert_tasks(conn, project_id, plan.tasks, first_order=0)
@@ -356,7 +331,7 @@ class SQLiteTaskStore:
     # get ready tasks - get tasks that are in pending state and 
     # their dependents are all done
     def get_ready_tasks(self, project_id: str) -> list[dict]:
-        """Return PENDING tasks whose every dependency is COMPLETED or SKIPPED."""
+        """Return PENDING tasks whose every dependency is COMPLETED."""
         with self._conn() as conn:
             rows = conn.execute(
                 """SELECT * FROM tasks
@@ -385,7 +360,7 @@ class SQLiteTaskStore:
             row = conn.execute(
                 f"""SELECT COUNT(*) FROM tasks
                     WHERE project_id = ? AND id IN ({placeholders})
-                      AND status IN ('completed', 'skipped')""",
+                      AND status = 'completed'""",
                 [project_id, *dep_ids]
             ).fetchone()
         # every dependency must exist and be done — a missing id never counts as done

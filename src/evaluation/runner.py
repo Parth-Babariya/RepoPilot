@@ -116,7 +116,6 @@ def _config_snapshot(top_k: int) -> dict:
         "embeddings":     config["embeddings"]["model"],
         "vector_store":   config["vector_store"]["provider"],
         "rag_mode":       config["rag"]["mode"],
-        "retrieval_mode": config["vector_store"].get("retrieval_mode"),
         "symbol_tools":   symbols_enabled(),
         "rerank":         rerank_config()["model"] if rerank_config()["enabled"] else False,
         "top_k":          top_k,

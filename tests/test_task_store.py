@@ -153,3 +153,16 @@ def test_old_database_is_migrated(tmp_path):
     assert statuses(store, "p1") == {"task_001": "completed"}            # old rows kept
     new = store.create_project("new goal", make_plan([("task_001", [])]))  # same id now allowed
     assert statuses(store, new) == {"task_001": "pending"}
+
+
+def test_every_task_status_has_a_display_style():
+    from repopilot.tasks.status import _STATUS_STYLE
+    from repopilot.tasks.task_store import TaskStatus
+    assert set(_STATUS_STYLE) == set(TaskStatus)
+
+
+def test_project_records_when_its_plan_was_approved(store):
+    pid = store.create_project("goal", make_plan([("a", [])]))
+    with store._conn() as conn:
+        row = conn.execute("SELECT approved_at, plan_json FROM projects WHERE id=?", (pid,)).fetchone()
+    assert row["approved_at"] is not None and row["plan_json"]

@@ -5,9 +5,9 @@ from repopilot.agent.tools import search_codebase
 from repopilot.agent.symbol_tools import find_symbol, find_callers, find_callees
 from repopilot.context.symbol_index import symbols_enabled
 from repopilot.observability.logger import get_logger
-from repopilot.tools.terminal_tools import run_command, run_in_directory
+from repopilot.tools.terminal_tools import run_command
 from repopilot.mcp_integration.mcp_client import get_mcp_tools
-from repopilot.skills.skill_tools import load_skill, build_skills_prompt
+from repopilot.skills.skill_tools import build_skills_prompt, get_registry, load_skill
 from repopilot.memory.short_term import get_summarization_middleware
 
 logger = get_logger(__name__)
@@ -29,22 +29,20 @@ async def build_agent(checkpointer):
    llm = get_llm()
    mcp_tools = await get_mcp_tools()
 
-   skills_prompt = build_skills_prompt()
    full_prompt = SYSTEM_PROMPT
+   # run_command stays for questions about history ("when did this change?" → git log);
+   # the safety policy lets read-only commands through and asks about anything else.
+   tools = [search_codebase, run_command, *mcp_tools]
+
    if symbols_enabled():
        full_prompt += "\n\n" + SYMBOL_TOOLS_PROMPT
-   if skills_prompt:
-       full_prompt += "\n\n" + skills_prompt
-
-   tools = [
-       search_codebase,
-       load_skill,
-       run_command,
-       run_in_directory,
-       *mcp_tools,
-   ]
-   if symbols_enabled():
        tools += [find_symbol, find_callers, find_callees]
+
+   # Skills: only the names/descriptions go in the prompt; the agent loads a
+   # skill's full instructions with load_skill when a question matches one.
+   if get_registry().skill_names:
+       full_prompt += "\n\n" + build_skills_prompt()
+       tools.append(load_skill)
 
    return create_agent(
        llm,

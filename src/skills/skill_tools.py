@@ -24,6 +24,10 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 _registry: SkillRegistry | None = None
 
+# Skills shipped with RepoPilot (trace_flow, review_code, debug_error). A repo's
+# own skills in skills.skills_dir are loaded after these and override by name.
+BUILTIN_SKILLS_DIR = Path(__file__).parent / "builtin"
+
 def get_registry() -> SkillRegistry:
    """
    Return the process-wide SkillRegistry, building it on first call.
@@ -41,10 +45,10 @@ def get_registry() -> SkillRegistry:
    """
    global _registry
    if _registry is None:
-       skills_dir = Path.cwd() / config.get("skills", {}).get("skills_dir", ".repopilot/skills")
-       _registry = SkillRegistry(skills_dir)
+       user_dir = Path.cwd() / config.get("skills", {}).get("skills_dir", ".repopilot/skills")
+       _registry = SkillRegistry([BUILTIN_SKILLS_DIR, user_dir])
        _registry.load()
-       logger.info(f"SkillRegistry initialized from: {skills_dir}")
+       logger.info(f"SkillRegistry loaded {_registry.skill_names} from {BUILTIN_SKILLS_DIR} and {user_dir}")
    return _registry
 
 

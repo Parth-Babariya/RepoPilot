@@ -8,18 +8,10 @@ _TIMEOUT_SECONDS = 30
 
 
 @tool
-def run_command(command: str) -> str:
-   """Run a shell command in the project folder and return its output. Times out after 30 seconds.
+def run_command(command: str, directory: str = "") -> str:
+   """Run a shell command and return its output. Times out after 30 seconds.
+   Runs in the project folder, or in `directory` (a folder inside the project) if given.
    Common read-only, build and test commands run directly; others need the user's approval."""
-   return run_guarded(command, timeout=_TIMEOUT_SECONDS)[1]
-
-
-@tool
-def run_in_directory(command: str, directory: str) -> str:
-   """Run a shell command inside a specific directory of the project. Times out after 30 seconds.
-   Common read-only, build and test commands run directly; others need the user's approval."""
-   if not directory or not directory.strip():
-       return "Error: directory cannot be empty"
-   if not os.path.isdir(directory):
+   if directory and not os.path.isdir(directory):
        return f"Error: directory does not exist: {directory}"
-   return run_guarded(command, cwd=directory, timeout=_TIMEOUT_SECONDS)[1]
+   return run_guarded(command, cwd=directory or None, timeout=_TIMEOUT_SECONDS)[1]

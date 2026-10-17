@@ -42,7 +42,7 @@
 # ── Indexing and search ─────────────────────────────────────────
 - id: incremental_index
   question: How does the Chroma indexer avoid re-embedding files that haven't changed?
-  expected_files: [context/indexers/semantic_chroma.py]
+  expected_files: [context/indexers/chroma.py]
   expected_facts: [mtime]
 
 - id: watcher_debounce

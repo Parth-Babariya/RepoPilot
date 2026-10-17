@@ -48,7 +48,7 @@ class TaskOrchestrator:
 
         Each iteration:
           1. Check progress — exit if nothing pending or in-progress
-          2. Get ready tasks (all deps completed/skipped)
+          2. Get ready tasks (all deps completed)
           3. Dispatch up to max_concurrent tasks
           4. Sleep 5s and repeat if waiting on in-progress tasks
         """
@@ -155,7 +155,7 @@ class TaskOrchestrator:
         downstream = _downstream_ids(tasks, failed["id"])
         affected   = [t for t in tasks if t["id"] in downstream and t["status"] in ("pending", "blocked")]
         unaffected = [t for t in tasks if t["id"] not in downstream and t["status"] in ("pending", "in_progress")]
-        completed  = [t for t in tasks if t["status"] in ("completed", "skipped")]
+        completed  = [t for t in tasks if t["status"] == "completed"]
         project    = self.store.get_project(project_id)
 
         console.print(
@@ -281,7 +281,6 @@ def _print_final_summary(progress: dict[str, int]) -> None:
     completed = progress.get("completed", 0)
     failed    = progress.get("failed", 0)
     blocked   = progress.get("blocked", 0)
-    skipped   = progress.get("skipped", 0)
     replaced  = progress.get("replaced", 0)
 
     if failed == 0 and blocked == 0:
@@ -295,5 +294,5 @@ def _print_final_summary(progress: dict[str, int]) -> None:
             console.print(f"  ❌ Failed:    {failed}  (run /task_status to review)")
         if blocked:
             console.print(f"  🚫 Blocked:   {blocked}  (dependencies failed)")
-        if skipped:
-            console.print(f"  ⏭ Skipped:   {skipped}")
+        if replaced:
+            console.print(f"  ⟳ Replaced:  {replaced}  (by a revised plan)")
