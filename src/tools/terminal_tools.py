@@ -1,7 +1,7 @@
 import os
 from langchain.tools import tool
 
-from repopilot.tools.safety import run_guarded
+from repopilot.guardrails.tool_safety import run_guarded
 
 
 _TIMEOUT_SECONDS = 30

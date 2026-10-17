@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from repopilot.evaluation.metrics import EvalQuestion
-from repopilot.llm.factory import get_judge_llm
+from repopilot.services.llm_service import get_judge_llm
 
 # ------------------------------------------------------------------
 # LLM-as-judge eval metrics — the counterpart to metrics.py.

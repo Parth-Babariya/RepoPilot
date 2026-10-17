@@ -11,9 +11,9 @@ from rich.console import Console
 from rich.table import Table
 
 from repopilot.config import config
-from repopilot.context.retrievers.factory import get_retriever
-from repopilot.context.retrievers.reranker import rerank_config
-from repopilot.context.symbol_index import symbols_enabled
+from repopilot.retrieval.search.factory import get_retriever
+from repopilot.retrieval.search.reranker import rerank_config
+from repopilot.retrieval.symbol_index import symbols_enabled
 from repopilot.evaluation.judge import judge_answer
 from repopilot.evaluation.metrics import (
     EvalQuestion, context_recall, fact_recall, load_questions, mean, reciprocal_rank, retrieval_rank,
@@ -213,13 +213,13 @@ def _print_report(run: dict, previous: dict | None) -> None:
 
 async def run_eval(agent, questions_file: str | None = None) -> dict | None:
     eval_cfg    = config.get("eval", {})
-    path        = Path(questions_file or eval_cfg.get("questions_file", "evals/questions.yaml"))
+    path        = Path(questions_file or eval_cfg.get("questions_file", "data/evals/questions.yaml"))
     results_dir = Path(eval_cfg.get("results_dir", ".repopilot/evals"))
     top_k       = int(eval_cfg.get("top_k", 5))
 
     if not path.exists():
         console.print(f"[yellow]Questions file not found: {path}[/yellow]")
-        console.print("[dim]Create one (see evals/questions.yaml in the RepoPilot repo for the format) "
+        console.print("[dim]Create one (see data/evals/questions.yaml in the RepoPilot repo for the format) "
                       "or pass a path: /eval path/to/questions.yaml[/dim]")
         return None
 

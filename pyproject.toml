@@ -44,27 +44,29 @@ package-mode = false
 
 [tool.setuptools]
 # The code lives directly in src/ but is installed as the `repopilot` package,
-# so imports are `from repopilot.agent import …` and the command is `repopilot`.
+# so imports are `from repopilot.agents import …` and the command is `repopilot`.
 package-dir = {"repopilot" = "src"}
 packages = [
     "repopilot",
-    "repopilot.agent",
-    "repopilot.cache",
-    "repopilot.context",
-    "repopilot.context.indexers",
-    "repopilot.context.retrievers",
+    "repopilot.agents",
+    "repopilot.config",
     "repopilot.evaluation",
-    "repopilot.llm",
-    "repopilot.mcp_integration",
+    "repopilot.guardrails",
     "repopilot.memory",
     "repopilot.observability",
+    "repopilot.protocols",
+    "repopilot.retrieval",
+    "repopilot.retrieval.indexing",
+    "repopilot.retrieval.search",
+    "repopilot.services",
     "repopilot.skills",
-    "repopilot.tasks",
     "repopilot.tools",
+    "repopilot.workflows",
 ]
 
 [tool.setuptools.package-data]
-repopilot = ["config.yaml", "mcp_servers.json", "skills/builtin/*/SKILL.md"]
+"repopilot.config" = ["config.yaml", "mcp_servers.json"]
+"repopilot.skills" = ["builtin/*/SKILL.md"]
 
 
 [tool.poetry.group.dev.dependencies]

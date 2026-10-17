@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-94%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [Configuration](#configuration) · [Evaluation](#evaluation) · [Project structure](#project-structure)
@@ -41,7 +41,7 @@ Sources:
 |---|---|
 | **Code Q&A with RAG** | tree-sitter splits code into functions and classes (Python, JS/TS, Java, Go, Rust, C/C++, C# and more). The chunks are embedded and searched before every answer. Answers render as Markdown and list their sources. |
 | **Runs for free** | The default setup uses Gemini's free tier for the LLM, and local embeddings and reranking (fastembed/ONNX). It costs $0, and indexing needs no API key. Switching to OpenAI or Anthropic is one config line. |
-| **Two-stage retrieval** | Vector search fetches 20 candidates. A local cross-encoder reranks them and keeps the best 5. Optional hybrid mode adds BM25 keyword search, merged by reciprocal rank fusion. |
+| **Measured retrieval** | Local vector search by default. Hybrid mode (adds BM25 keyword search, merged by reciprocal rank fusion) and a cross-encoder reranker are optional. Each setting was benchmarked, and the defaults follow the numbers ([`scripts/benchmark_retrieval.py`](scripts/benchmark_retrieval.py)). |
 | **Call-graph search** | A symbol index records every function, method, class and call site. The agent can answer *"what calls `fail_task`?"* exactly, not by similarity. |
 | **Multi-agent planning** | `/plan <goal>`: a planner LLM builds a dependency graph of tasks, and you approve it or ask for changes. Each task runs with only the tools its type needs. |
 | **Verified by execution** | After each task the system checks its files exist and parse, then runs the task's tests (a `verify_command` you approved with the plan). Only then does an LLM judge grade the actual files. An agent can't pass by just *saying* the tests pass. |
@@ -71,7 +71,7 @@ flowchart TB
 
     evalr --> ask
     evalr --> ejudge["LLM judge<br/>faithfulness ·<br/>correctness"]
-    plan --> workers["Task agents<br/>+ LLM judge"]
+    plan --> workers["Task agents<br/>+ critic agent"]
 
     subgraph tools["Agent tools"]
         search["search_codebase"]
@@ -83,7 +83,7 @@ flowchart TB
     ask --> ext
 
     subgraph knowledge["Code knowledge"]
-        vec[("Vector store<br/>Chroma / Qdrant")] --> rerank["Cross-encoder<br/>reranker"]
+        vec[("Vector store<br/>Chroma / Qdrant")] -. optional .-> rerank["BM25 hybrid ·<br/>reranker"]
         symgraph[("Symbol &<br/>call graph")]
     end
     search --> vec
@@ -161,23 +161,24 @@ sequenceDiagram
 
 The agent chooses its tools itself. Questions about behaviour ("how does caching work?") go to `search_codebase`. Exact structural questions ("what calls `fail_task`?") go to the call-graph tools, which read the symbol index directly instead of guessing by similarity.
 
-### Two-stage retrieval
+### Retrieval
 
 ```mermaid
 flowchart LR
     q["Search query"] --> e["Embed query<br/>bge-small · local"]
-    e --> v[("Vector store")]
-    v --> c["20 candidates<br/>fast, approximate"]
-    q -. "hybrid mode" .-> kw["BM25 keyword search<br/>code-aware tokens"]
-    kw -. "merged by rank (RRF)" .-> c
-    c --> x["Cross-encoder<br/>jina-reranker-v1-tiny<br/>scores query + chunk together"]
-    x --> k["Top 5 chunks<br/>precise"]
+    e --> v[("Vector store<br/>Chroma / Qdrant")]
+    v --> k["Top 5 chunks"]
+    q -. "rag.mode: hybrid" .-> kw["BM25 keyword search<br/>code-aware tokens"]
+    kw -. "merged by rank (RRF)" .-> k
+    k -. "rerank.enabled" .-> x["Cross-encoder<br/>reorders 20 candidates"]
+    x -.-> a
     k --> a["Agent"]
 ```
 
-Vector search is fast because it compares precomputed embeddings, but it ranks roughly. A cross-encoder reads the query and each chunk together, which is more accurate but too slow to run on every chunk. So vector search narrows the code down to 20 candidates, and the cross-encoder ranks those. The reranker was chosen by benchmarking three models on the eval set.
+The default is plain vector search: the query is embedded locally and compared with the stored chunk embeddings, which takes milliseconds. Two additions are built in and can be switched on in config. Both were measured on the eval set before deciding the defaults ([numbers](#retrieval-benchmark-measured)):
 
-**Hybrid mode** (`rag.mode: hybrid`) adds BM25 keyword search, which matches exact identifiers such as `fail_task` (split into `fail` and `task` too). The two result lists are merged with reciprocal rank fusion, which needs only ranks, so vector distances and BM25 scores never have to be put on the same scale. It works with both stores. With Chroma, the keyword index is built in memory from the stored chunks and rebuilt when the code changes. With Qdrant, every point stores a sparse BM25 vector next to its dense one. Either way, one index serves both modes, so switching `rag.mode` never needs a re-index. On this project's eval set it didn't beat plain vector search, so it is off by default ([numbers](#retrieval-benchmark-measured)).
+- **Hybrid mode** (`rag.mode: hybrid`) adds BM25 keyword search, which matches exact identifiers such as `fail_task` (split into `fail` and `task` too). The two result lists are merged with reciprocal rank fusion, which needs only ranks, so vector distances and BM25 scores never have to be put on the same scale. It works with both stores, and one index serves both modes, so switching never needs a re-index. With Chroma, the keyword index is built in memory from the stored chunks. With Qdrant, every point stores a sparse BM25 vector next to its dense one.
+- **Reranking** (`rerank.enabled`) fetches 20 candidates and has a local cross-encoder, which reads the query and each chunk together, keep the best 5. On this project it made results worse: it favours text that reads like the question, such as test names and README prose, over the code that answers it. It also adds about 1.7 s per search. It may help on repos with less prose.
 
 ### Indexing pipeline
 
@@ -286,7 +287,7 @@ Agents read untrusted text: repository files, GitHub issues, and code comments t
 
 ```mermaid
 flowchart LR
-    qs["evals/questions.yaml<br/>question · expected files ·<br/>expected facts"]
+    qs["data/evals/questions.yaml<br/>question · expected files ·<br/>expected facts"]
     qs --> ret["Retriever only"] --> m1["hit@5 · MRR"]
     qs --> agent["Q&A agent<br/>cache off"]
     agent --> m2["context recall ·<br/>fact recall"]
@@ -421,15 +422,15 @@ API keys are passed in when the container starts and are never copied into the i
 
 ## Configuration
 
-All settings live in [`src/config.yaml`](src/config.yaml). API keys go in `.env` in the project root; [`.env.example`](.env.example) is the template.
+All settings live in [`src/config/config.yaml`](src/config/config.yaml), documented inline. API keys go in `.env` in the project root; [`.env.example`](.env.example) is the template.
 
 | Section | Controls |
 |---|---|
-| `llm` | Provider (`gemini` / `openai` / `anthropic`), model, a cheaper `judge_model`, and retries for rate limits. To list the Gemini models your key can use, run `python -m repopilot.llm.list_models` |
+| `llm` | Provider (`gemini` / `openai` / `anthropic`), model, a cheaper `judge_model`, and retries for rate limits. To list the Gemini models your key can use, run `python -m repopilot.services.list_models` |
 | `embeddings` | `fastembed` (local and free; runs Hugging Face models like BGE without PyTorch) or `openai`, and the model. Each model gets its own index, so switching is safe |
 | `vector_store`, `qdrant` | Chroma (local, the default) or Qdrant (a server or Qdrant Cloud, via `QDRANT_URL`) |
 | `rag` | `semantic` (vector search) or `hybrid` (vector + BM25 keyword search); works with either store |
-| `rerank` | Turn reranking on or off, and choose the cross-encoder and candidate count |
+| `rerank` | Optional cross-encoder reranking (off by default, see the benchmark), the model and candidate count |
 | `symbols` | Turn the call-graph tools on or off |
 | `semantic_cache` | Redis URL, similarity threshold and TTL |
 | `memory` | When to summarise long conversations |
@@ -439,7 +440,7 @@ All settings live in [`src/config.yaml`](src/config.yaml). API keys go in `.env`
 
 ## Evaluation
 
-[`evals/questions.yaml`](evals/questions.yaml) has 24 questions about RepoPilot's own code. Each lists the files that hold the answer and the facts a correct answer should mention. To run it, start RepoPilot in the project root and type `/eval`.
+[`data/evals/questions.yaml`](data/evals/questions.yaml) has 24 questions about RepoPilot's own code. Each lists the files that hold the answer and the facts a correct answer should mention. To run it, start RepoPilot in the project root and type `/eval`.
 
 | Metric | How it's measured |
 |---|---|
@@ -466,16 +467,20 @@ An LLM judge is itself a model that can be wrong, so its scores mean something o
 
 ### Retrieval benchmark (measured)
 
-Search quality on the 24 questions, retrieving from RepoPilot's own code with `bge-small-en-v1.5`. Scores are per file, with no LLM involved:
+Search quality on the 24 questions, retrieving from RepoPilot's own code with `bge-small-en-v1.5`. Scores are per file, with no LLM involved. Reproduce them with `python scripts/benchmark_retrieval.py`; it's free and needs no API key.
 
 | Search | hit@5 | MRR | Time / query (laptop CPU) |
 |---|---|---|---|
-| Vector only | **88%** | 0.62 | 0.02 s |
-| Vector + reranker (default) | 83% | **0.66** | 1.5 s |
-| Hybrid (vector + BM25) | 79% | **0.66** | 0.04 s |
-| Hybrid + reranker | 79% | 0.60 | 1.4 s |
+| **Vector only (default)** | **88%** | **0.64** | 0.03 s |
+| Vector + reranker | 75% | 0.61 | 1.7 s |
+| Hybrid (vector + BM25) | 79% | 0.62 | 0.03 s |
+| Hybrid + reranker | 79% | 0.60 | 1.6 s |
 
-The reranker puts the right file higher (MRR) but missed one more question in the top 5. Hybrid search didn't beat plain vector search here. On the questions it missed, the identifiers in the question (`fail_task`, `claim_task`, …) appear far more often in the test files than in the file that answers the question, so keyword search fills the top 5 with tests. For "where is X used?" it finds where X is *defined*. The call-graph tools answer exact-name questions like these precisely instead. With 24 questions, one question is about 4 points, so these gaps are small; try `rag.mode: hybrid` on your own repo with `/eval`. `bge-small` is the default embedding model because, in an earlier comparison, it matched `bge-base`'s accuracy and indexed about 3× faster.
+Neither addition beat plain vector search here, so both are off by default:
+- **Hybrid.** On the questions it missed, the identifiers in the question (`fail_task`, `claim_task`, …) appear far more often in the test files than in the file that answers it, so keyword search fills the top 5 with tests. For "where is X used?" it finds where X is *defined*. The call-graph tools answer exact-name questions like these precisely instead.
+- **Reranker.** The cross-encoder scores how much a chunk *reads like* the question. Test names and README paragraphs read that way, so they took 32 of the 120 top-5 slots and pushed out the code that answers the question.
+
+With 24 questions, one question is about 4 points, so small gaps are noise, but the reranker's drop is three questions. The numbers also move as the code changes, which is why the script is in the repo. `bge-small` is the default embedding model because, in an earlier comparison, it matched `bge-base`'s accuracy and indexed about 3× faster.
 
 ### Full `/eval` results
 
@@ -483,41 +488,66 @@ The reranker puts the right file higher (MRR) but missed one more question in th
 
 | Configuration | Hit rate | MRR | Faithfulness | Correctness | Cost / question |
 |---|---|---|---|---|---|
-| Vector search only (`rerank.enabled: false`, `symbols.enabled: false`) | | | | | |
-| + reranking | | | | | |
-| + call-graph tools | | | | | |
+| Vector search only (`symbols.enabled: false`) | | | | | |
+| + call-graph tools (default) | | | | | |
+| + reranking (`rerank.enabled: true`) | | | | | |
 
 ## Project structure
 
 ```
 repopilot/
-├── README.md
-├── pyproject.toml           dependencies (Poetry) and package config
-├── poetry.lock              exact installed versions
-├── requirements.txt         same dependencies, for plain pip
-├── .env.example             API key template (copy to .env)
-├── Dockerfile               RepoPilot image
-├── docker-compose.yml       RepoPilot + Redis
-├── evals/questions.yaml     eval question set
-├── tests/                   pytest suite
-└── src/                     all source code, installed as the `repopilot` package
-    ├── main.py              REPL and command routing
-    ├── config.yaml          all settings
-    ├── agent/               /ask agent, tools, sources, query handling
-    ├── context/
-    │   ├── indexers/        tree-sitter chunking, file watcher, one module per store (chroma, qdrant)
-    │   ├── retrievers/      search per store (semantic or hybrid), BM25, cross-encoder reranking
-    │   └── symbol_index.py  symbol & call-graph index
-    ├── tasks/               /plan: planner + re-planner, approval, orchestrator, executor (checks + judge), recovery
-    ├── evaluation/          /eval: deterministic metrics, LLM judge, runner, /judge_check
-    ├── observability/       logging, usage & cost tracking, /stats
-    ├── llm/                 model factory (Gemini / OpenAI / Anthropic), local embeddings
-    ├── cache/               Redis semantic cache
-    ├── memory/              sessions and summarisation
-    ├── skills/              skill registry + built-in skills (builtin/<name>/SKILL.md)
-    ├── tools/               file and shell tools, safety policy
-    └── mcp_integration/     MCP servers (read-only)
+├── src/                         all source code, installed as the `repopilot` package
+│   ├── main.py                  CLI entry point: REPL and command routing
+│   ├── config/                  settings.py · config.yaml (all settings) · mcp_servers.json
+│   ├── agents/                  one file per LLM agent role
+│   │   ├── qa_agent.py            /ask: tool-using Q&A agent with memory
+│   │   ├── planner_agent.py       /plan: planner and re-planner
+│   │   ├── task_agent.py          /plan: builds one task with its type's toolset
+│   │   └── critic_agent.py        /plan: LLM judge for a finished task
+│   ├── workflows/               how agents are chained together
+│   │   ├── ask_workflow.py        cache → Q&A agent → sources
+│   │   ├── plan_workflow.py       orchestrator loop: ready tasks, retries, re-planning
+│   │   ├── task_execution.py      task agent → objective checks → critic agent
+│   │   ├── verification.py        objective checks: files exist, parse, tests pass
+│   │   ├── approval.py            human-in-the-loop plan approval
+│   │   ├── task_store.py          task state in SQLite (crash-safe)
+│   │   └── recovery.py · status.py
+│   ├── tools/                   agent-callable tools: code search, call graph, files, shell, sources
+│   ├── guardrails/              tool_safety.py: file scoping, command allowlist, read-only MCP
+│   ├── retrieval/               code knowledge
+│   │   ├── indexing/              tree-sitter chunking, file watcher, one module per store
+│   │   ├── search/                vector / hybrid search per store, BM25, reranker
+│   │   └── symbol_index.py        symbol and call-graph index
+│   ├── memory/                  conversation sessions, summarisation, semantic cache
+│   ├── protocols/               MCP client and server config
+│   ├── services/                LLM and embedding providers (Gemini / OpenAI / Anthropic, fastembed)
+│   ├── skills/                  skill registry + built-in skills (builtin/<name>/SKILL.md)
+│   ├── evaluation/              /eval metrics, LLM judge, runner, /judge_check
+│   └── observability/           logging, usage and cost tracking, /stats
+├── data/evals/questions.yaml    eval question set (the golden data)
+├── scripts/
+│   └── benchmark_retrieval.py   reproduces the retrieval benchmark
+├── tests/                       pytest suite, one folder per src/ area
+├── Dockerfile · docker-compose.yml
+├── pyproject.toml · poetry.lock · requirements.txt
+└── .env.example                 API key template (copy to .env)
 ```
+
+**Layers.** Each layer only uses the layers below it, so every folder has one clear job:
+
+```
+main.py                 entry point
+   ↓
+workflows/              orchestrate a command: what runs, in what order, what happens on failure
+   ↓
+agents/                 the LLM roles: prompt + tools + model
+   ↓
+tools/ · retrieval/ · memory/ · skills/ · protocols/      capabilities the agents use
+   ↓
+guardrails/ · services/ · observability/ · config/        cross-cutting foundations
+```
+
+For example, the critic agent doesn't import the verification workflow; it receives the check report as text. `evaluation/` sits beside `workflows/` and drives the same Q&A agent.
 
 ## Tests
 
@@ -525,7 +555,7 @@ repopilot/
 poetry run pytest
 ```
 
-The suite covers the task store and orchestration loop, re-planning, verification checks, tool safety, symbol extraction and call-graph queries, hybrid search, skills, usage tracking, eval metrics and the judge, reranking, source formatting and code chunking. It needs no API keys. The Qdrant tests run only when a Qdrant server is reachable (`docker run -p 6333:6333 qdrant/qdrant`) and are skipped otherwise.
+Tests mirror `src/` (`tests/agents/`, `tests/workflows/`, `tests/retrieval/`, …). They cover the task store and orchestration loop, re-planning, verification checks, the task and planner agents, tool safety, symbol extraction and call-graph queries, hybrid search, skills, usage tracking, eval metrics and the judge, reranking, source formatting and code chunking. A smoke test imports every module. No API keys are needed. The Qdrant tests run only when a Qdrant server is reachable (`docker run -p 6333:6333 qdrant/qdrant`) and are skipped otherwise.
 
 ## Tech stack
 

@@ -1,0 +1,114 @@
+embeddings:
+ # Free, local (fastembed — downloaded once, no API key). bge-small matched bge-base's
+ # accuracy on data/evals/questions.yaml and indexes ~3x faster (see rag: below for current numbers).
+ # Switching model builds a fresh index automatically (one collection per model).
+ # fastembed runs Hugging Face models (BGE, Jina, …) via ONNX — no PyTorch needed.
+ provider: fastembed      # fastembed | openai
+ model: BAAI/bge-small-en-v1.5
+ # Paid OpenAI setup:
+ #   provider: openai
+ #   model: text-embedding-3-small
+
+semantic_cache:
+ enabled: true
+ redis_url: redis://localhost:6379
+ # Windows: Redis runs inside this WSL distro and is started automatically when
+ # RepoPilot starts (it then stays up until Windows restarts). Leave empty on
+ # Linux/macOS, with Docker, or with a cloud Redis URL.
+ wsl_distro: Ubuntu-24.04
+ threshold: 0.85
+ ttl: 86400
+
+tasks:
+ db_path: .repopilot/tasks.db
+ verify_timeout_seconds: 120   # limit for each task's verify_command (e.g. running its tests)
+ max_replans: 1                # times per /plan run a failed task may be re-planned (0 = never)
+
+safety:
+ # Agents can only read/write inside the folder RepoPilot runs in, and never .env files.
+ workspace_only: true
+ # Common read-only/build/test commands run directly. Anything else asks you first
+ # (false = refuse instead). During /eval nobody can answer, so those are refused.
+ confirm_other_commands: true
+ # Keep only MCP tools that read (GitHub get/list/search, filesystem read) —
+ # RepoPilot never needs to push, open PRs or edit files through MCP.
+ mcp_read_only: true
+
+llm:
+ # Free: Gemini (key from https://aistudio.google.com/apikey → GOOGLE_API_KEY in .env).
+ # Model names change — list the ones your key can use: python -m repopilot.services.list_models
+ # (a listed model can still refuse new users: gemini-2.5-flash did in Oct 2026 — test with /ask)
+ provider: gemini                     # openai | anthropic | gemini
+ # Free-tier daily caps differ per model: gemini-3.5-flash allows only 20 requests/day
+ # (too few for /plan or /eval), so the default is flash-lite. Use flash for one-off /ask.
+ model: gemini-3.5-flash-lite
+ judge_model: gemini-3.5-flash-lite   # cheaper/faster model used only for LLM-as-judge
+ max_retries: 6                       # back off and retry on rate limits (free tiers allow few requests/minute)
+ # Paid OpenAI setup:
+ #   provider: openai
+ #   model: gpt-5.5
+ #   judge_model: gpt-4o-mini
+
+skills:
+ # Built-in skills (trace_flow, review_code, debug_error) always load. Put your own in
+ # <skills_dir>/<name>/SKILL.md in the analysed repo — a same-named skill overrides a built-in.
+ skills_dir: .repopilot/skills
+
+memory:
+ db_path: .repopilot/memory/memory.db
+ summarize_at_tokens: 4000
+ keep_last_messages: 20
+
+chromadb:
+ persist_dir: .repopilot/chromadb/
+ collection_name: codebase
+
+rag:
+ # semantic = vector search · hybrid = vector + BM25 keyword search merged by rank
+ # (works with Chroma and Qdrant). Measured with scripts/benchmark_retrieval.py
+ # (bge-small, hit@5 / MRR): semantic 88% / 0.64 · + rerank 75% / 0.61 ·
+ # hybrid 79% / 0.62 · hybrid + rerank 79% / 0.60. Plain semantic search wins on this
+ # question set, so it is the default — rerun the script on your own repo to compare.
+ mode: semantic           # semantic | hybrid
+
+vector_store:
+ # chroma: local, stored in the repo's .repopilot/ (default) · qdrant: a server or Qdrant Cloud
+ # (QDRANT_URL in .env). Both support rag.mode semantic and hybrid without re-indexing.
+ provider: chroma         # chroma | qdrant
+
+rerank:
+ # Off by default: on data/evals/questions.yaml it lowered both hit@5 (88% → 75%) and MRR
+ # (0.64 → 0.61), because the cross-encoder favours text that *reads* like the question —
+ # test names, README prose — over the code that implements the answer. It also costs
+ # ~1.7s per search on a laptop CPU. It may suit repos with less prose; measure first.
+ enabled: false           # vector search fetches `candidates` chunks, a local cross-encoder keeps the best k
+ # jina-v1-tiny beat ms-marco-MiniLM-L-6 and jina-v1-turbo in a reranker comparison, and was fastest
+ model: jinaai/jina-reranker-v1-tiny-en
+ candidates: 20           # more = better recall but slower (~0.06s per candidate on a laptop CPU)
+
+usage:
+ db_path: .repopilot/usage.db
+ # USD per 1M tokens, used for /stats cost estimates. Prices change —
+ # check https://openai.com/api/pricing and update. Unlisted models show "?".
+ prices:
+   gemini-3.5-flash:       {input: 0, output: 0}    # free tier (paid tier is billed differently)
+   gemini-3.5-flash-lite:  {input: 0, output: 0}    # free tier
+   BAAI/bge-small-en-v1.5: {input: 0, output: 0}    # local embeddings — always free
+   BAAI/bge-base-en-v1.5:  {input: 0, output: 0}
+   jinaai/jina-embeddings-v2-base-code: {input: 0, output: 0}
+   gpt-5.5:                {input: 5.00, output: 30.00}
+   gpt-4o-mini:            {input: 0.15, output: 0.60}
+   text-embedding-3-small: {input: 0.02, output: 0}
+
+symbols:
+ enabled: true            # symbol + call-graph tools for /ask
+ db_path: .repopilot/symbols.db
+
+eval:
+ questions_file: data/evals/questions.yaml   # relative to the repo RepoPilot is run in
+ results_dir: .repopilot/evals
+ top_k: 5
+ delay_seconds: 15        # pause between questions to stay under free-tier rate limits (0 for paid APIs)
+
+qdrant:
+ collection_name: repopilot

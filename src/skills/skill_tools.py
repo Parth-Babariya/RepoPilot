@@ -53,19 +53,19 @@ def get_registry() -> SkillRegistry:
 
 
 # ---------------------------------------------------------------------------
-# Called by factory.py at agent build time (not a tool — plain function)
+# Called by agents/qa_agent.py at agent build time (not a tool — plain function)
 # ---------------------------------------------------------------------------
 
 def build_skills_prompt() -> str:
    """
    Trigger registry initialisation and return the metadata-only prompt snippet.
 
-   This is called once inside build_agent() in factory.py and its return value
+   This is called once inside build_agent() in agents/qa_agent.py and its return value
    is appended to SYSTEM_PROMPT before the agent is created. The LLM therefore
    always knows what skills exist, without paying the token cost of their bodies.
 
    Flow:
-       factory.py: build_agent()
+       qa_agent.py: build_agent()
            → build_skills_prompt()          (this function)
                → get_registry()             (init registry if first call)
                    → SkillRegistry.load()   (scan skills_dir on disk)
@@ -77,7 +77,7 @@ def build_skills_prompt() -> str:
 
 
 # ---------------------------------------------------------------------------
-# The agent-callable tool (registered in factory.py tools list)
+# The agent-callable tool (added to the Q&A agent's tools in agents/qa_agent.py)
 # ---------------------------------------------------------------------------
 
 @tool

@@ -1,0 +1,133 @@
+# Eval questions about RepoPilot's own code.
+# Run RepoPilot from the project root (the folder containing pyproject.toml) and type /eval.
+#
+#   expected_files — paths inside src/ that contain the answer
+#                    (matched by path suffix, so they work from the project root)
+#   expected_facts — names/phrases a correct answer should mention (scores the answer)
+#
+# This file is excluded from indexing so /ask can't read the expected answers.
+# If you change the code these questions describe, update them too.
+
+# ── /plan execution ─────────────────────────────────────────────
+- id: retry_logic
+  question: How are failed /plan tasks retried, and when does a task give up?
+  expected_files: [workflows/task_store.py]
+  expected_facts: [fail_task, max_retries]
+
+- id: blocked_dependents
+  question: What happens to tasks whose dependency failed?
+  expected_files: [workflows/task_store.py, workflows/plan_workflow.py]
+  expected_facts: [block_unreachable_tasks, blocked]
+
+- id: resume_project
+  question: How does /plan decide whether to resume an existing project or start a new one?
+  expected_files: [workflows/plan_workflow.py, workflows/task_store.py]
+  expected_facts: [get_latest_approved_project, abandoned]
+
+- id: crash_recovery
+  question: How are tasks that were running when the process crashed recovered?
+  expected_files: [workflows/recovery.py]
+  expected_facts: [RecoveryManager, in_progress]
+
+- id: plan_judge
+  question: How is a /plan task's output checked before the task is marked complete?
+  expected_files: [workflows/task_execution.py, workflows/verification.py, agents/critic_agent.py]
+  expected_facts: [verify_task, judge_task, score]
+
+- id: task_tools
+  question: Which tools does a "test" task get during /plan execution?
+  expected_files: [agents/task_agent.py]
+  expected_facts: [TOOLS_BY_TYPE, run_command]
+
+# ── Indexing and search ─────────────────────────────────────────
+- id: incremental_index
+  question: How does the Chroma indexer avoid re-embedding files that haven't changed?
+  expected_files: [retrieval/indexing/chroma.py]
+  expected_facts: [mtime]
+
+- id: watcher_debounce
+  question: Why does the file watcher wait before re-indexing a changed file?
+  expected_files: [retrieval/indexing/watcher.py]
+  expected_facts: [_DEBOUNCE_SECONDS]
+
+- id: watcher_windows
+  question: Which file-watching backend is used on Windows, and why?
+  expected_files: [retrieval/indexing/watcher.py]
+  expected_facts: [PollingObserver]
+
+- id: chunking
+  question: How is source code split into chunks before it is embedded?
+  expected_files: [retrieval/indexing/code_parser.py]
+  expected_facts: [tree-sitter, _sliding_window]
+
+- id: skipped_files
+  question: Which files and folders are excluded from indexing?
+  expected_files: [retrieval/indexing/code_parser.py]
+  expected_facts: [SKIP_DIRS, MAX_FILE_BYTES]
+
+- id: retriever_choice
+  question: How is the retriever chosen between Chroma and Qdrant?
+  expected_files: [retrieval/search/factory.py]
+  expected_facts: [get_retriever, hybrid]
+
+# ── Cache, memory, models ───────────────────────────────────────
+- id: cache_threshold
+  question: When does the semantic cache return a cached answer instead of calling the agent?
+  expected_files: [memory/semantic_cache.py]
+  expected_facts: [threshold, similarity]
+
+- id: cache_followups
+  question: Why are follow-up questions never answered from the semantic cache?
+  expected_files: [workflows/ask_workflow.py]
+  expected_facts: [_has_history]
+
+- id: cache_invalidation
+  question: How is the semantic cache invalidated when the code changes?
+  expected_files: [memory/semantic_cache.py, main.py]
+  expected_facts: [invalidate_domain]
+
+- id: llm_provider
+  question: How does RepoPilot choose between OpenAI and Anthropic models?
+  expected_files: [services/llm_service.py]
+  expected_facts: [get_llm, provider]
+
+- id: sessions
+  question: How are conversation sessions stored and switched?
+  expected_files: [memory/session.py]
+  expected_facts: [current_session, switch_session]
+
+- id: summarization
+  question: When are older conversation messages summarised?
+  expected_files: [memory/conversation.py]
+  expected_facts: [SummarizationMiddleware, summarize_at_tokens]
+
+- id: skills
+  question: How are skills loaded and made available to the agent?
+  expected_files: [skills/skill_tools.py]
+  expected_facts: [load_skill, build_skills_prompt]
+
+- id: command_safety
+  question: Which shell commands can an agent run without asking the user first?
+  expected_files: [guardrails/tool_safety.py]
+  expected_facts: [classify_command, allowlist]
+
+- id: usage_cost
+  question: How is the cost of a model call calculated for /stats?
+  expected_files: [observability/usage.py]
+  expected_facts: [estimate_cost, prices]
+
+# ── Exact call-graph questions (where symbol tools should help) ─
+- id: callers_fail_task
+  question: What calls fail_task?
+  expected_files: [workflows/plan_workflow.py]
+  expected_facts: [_execute]
+
+- id: callees_execute
+  question: What does TaskOrchestrator._execute do, step by step?
+  expected_files: [workflows/plan_workflow.py]
+  expected_facts: [claim_task, run_subtask_agent, complete_task, fail_task]
+
+- id: callers_get_retriever
+  question: Where is get_retriever used?
+  expected_files: [tools/code_search.py]
+  expected_facts: [search_codebase]

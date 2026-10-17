@@ -9,25 +9,25 @@ from rich.markup import escape
 from rich.prompt import Confirm, Prompt
 
 from repopilot.config import config
-from repopilot.context.indexers.factory import get_indexer, get_index_inspector
-from repopilot.llm.factory import PROVIDER_API_KEYS, chat_provider
+from repopilot.retrieval.indexing.factory import get_indexer, get_index_inspector
+from repopilot.services.llm_service import PROVIDER_API_KEYS, chat_provider
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from repopilot.agent.factory import build_agent
-from repopilot.memory.short_term import get_checkpointer_db_path
-from repopilot.agent.orchestrator import QueryResult, handle_query
-from repopilot.agent.sources import format_sources
+from repopilot.agents.qa_agent import build_agent
+from repopilot.memory.conversation import get_checkpointer_db_path
+from repopilot.workflows.ask_workflow import QueryResult, handle_query
+from repopilot.tools.sources import format_sources
 from repopilot.memory.session import get_current_session, new_session, switch_session
-from repopilot.cache.semantic_cache import build_semantic_cache, get_repo_domain
+from repopilot.memory.semantic_cache import build_semantic_cache, get_repo_domain
 from repopilot.observability.logger import enable_file_logging, get_logger
 from repopilot.observability.usage import track
 from repopilot.observability.stats import show_stats
 from repopilot.evaluation.runner import run_eval
 from repopilot.evaluation.judge_check import run_judge_check
 
-from repopilot.tasks.orchestrator import handle_plan_command
-from repopilot.tasks.status import show_task_status
-from repopilot.context.indexers.watcher import start_watcher, stop_watcher
-from repopilot.tools.safety import set_confirm_handler
+from repopilot.workflows.plan_workflow import handle_plan_command
+from repopilot.workflows.status import show_task_status
+from repopilot.retrieval.indexing.watcher import start_watcher, stop_watcher
+from repopilot.guardrails.tool_safety import set_confirm_handler
 
 # .env lives in the project root (next to pyproject.toml) and wins over keys
 # already set in Windows/shell environment variables.
@@ -245,7 +245,7 @@ async def _run_async():
 _PROVIDER_ERRORS = {
     "AuthenticationError":   "The API key was rejected — check the key in your .env file.",
     "ClientError":           "The provider rejected the request — check the API key and llm.model in config.yaml.",
-    "ChatGoogleGenerativeAIError": "Gemini rejected the request — check GOOGLE_API_KEY and llm.model (see `python -m repopilot.llm.list_models`).",
+    "ChatGoogleGenerativeAIError": "Gemini rejected the request — check GOOGLE_API_KEY and llm.model (see `python -m repopilot.services.list_models`).",
     "PermissionDeniedError": "The API key doesn't have access to this model.",
     "RateLimitError":        "The provider refused the request: rate limit hit or no credits left on the account.",
     "NotFoundError":         "The model in config.yaml wasn't found — check llm.model / embeddings.model.",

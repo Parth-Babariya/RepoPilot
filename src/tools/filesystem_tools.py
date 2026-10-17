@@ -1,7 +1,7 @@
 import os
 from langchain.tools import tool
 
-from repopilot.tools.safety import check_path
+from repopilot.guardrails.tool_safety import check_path
 
 
 _MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB

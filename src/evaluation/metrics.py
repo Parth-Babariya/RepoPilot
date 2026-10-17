@@ -24,7 +24,7 @@ def load_questions(path: str | Path) -> list[EvalQuestion]:
     Load a questions file:
         - id: retry_logic                  # optional, defaults to q1, q2, ...
           question: "Where are failed tasks retried?"
-          expected_files: ["tasks/task_store.py"]
+          expected_files: ["workflows/task_store.py"]
           expected_facts: ["fail_task", "max_retries"]
     """
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
