@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-137%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-145%20passing-brightgreen)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [Configuration](#configuration) · [Evaluation](#evaluation) · [Project structure](#project-structure)
@@ -156,11 +156,11 @@ RepoPilot has **seven LLM roles**. Two are true agents that use tools in a loop:
 
 | Agent | File | When it runs | What it does | Tools | Model | Output |
 |---|---|---|---|---|---|---|
-| **Q&A agent** | [`agents/qa_agent.py`](src/agents/qa_agent.py) | `/ask`, and each `/eval` question | Answers questions about the code in a loop: think, call a tool, read the result, repeat. Remembers the session. | `search_codebase`, `find_symbol` · `find_callers` · `find_callees`, `run_command`, `load_skill`, read-only MCP | main | Markdown answer + sources |
+| **Q&A agent** | [`agents/qa_agent.py`](src/agents/qa_agent.py) | `/ask`, and each `/eval` question | Answers questions about the code in a loop: think, call a tool, read the result, repeat. Remembers the session. | `search_codebase`, `repo_map`, `read_lines`, `find_symbol` · `find_callers` · `find_callees`, `run_command`, `load_skill`, read-only MCP | main | Markdown answer + sources |
 | **Answer critic** | [`agents/answer_critic.py`](src/agents/answer_critic.py) | After each `/ask` answer passes the citation checks | Checks that the answer's claims about the code are backed by the code the agent retrieved, and lists any that aren't so the agent can revise | none | judge | Grounded yes/no, unsupported claims |
-| **Planner** | [`agents/planner_agent.py`](src/agents/planner_agent.py) | Start of `/plan` | Turns a goal into a task graph: tasks, dependencies, acceptance criteria, verify commands, assumptions and risks | none | main | `ExecutionPlan` |
+| **Planner** | [`agents/planner_agent.py`](src/agents/planner_agent.py) | Start of `/plan` | Turns a goal into a task graph: tasks, dependencies, acceptance criteria, verify commands, assumptions and risks. Gets the repo map with the goal. | none | main | `ExecutionPlan` |
 | **Re-planner** | [`agents/planner_agent.py`](src/agents/planner_agent.py) | A task failed every retry | Proposes tasks that replace the failed one and the tasks depending on it | none | main | `RevisedPlan` |
-| **Task agent** (one per task) | [`agents/task_agent.py`](src/agents/task_agent.py) | Each `/plan` task | Builds one task. It sees its task, its dependencies' outputs and, on a retry, why the last attempt failed. | File tools by task type; `run_command` only for `test` / `integrate` | main | Files on disk + a summary |
+| **Task agent** (one per task) | [`agents/task_agent.py`](src/agents/task_agent.py) | Each `/plan` task | Builds one task. It sees its task, its dependencies' outputs and, on a retry, why the last attempt failed. | File tools by task type; read-only `search_codebase` · `find_symbol` · `read_lines`; `run_command` only for `test` / `integrate` | main | Files on disk + a summary |
 | **Critic agent** | [`agents/critic_agent.py`](src/agents/critic_agent.py) | After a task passes the automatic checks | Grades the files the task actually produced against its acceptance criteria, using the check results as evidence | none | judge | Pass/fail, score 0–10, reason |
 | **Eval judge** | [`evaluation/judge.py`](src/evaluation/judge.py) | `/eval` | Scores each answer for faithfulness (backed by the retrieved code?) and correctness | none | judge | Two scores 0–1, reason |
 
@@ -349,6 +349,17 @@ Only then does the LLM judge grade the task, and it sees the actual files and ch
 - **discard**: the worktree and branch are deleted
 
 An interrupted or paused plan keeps its worktree, and resuming continues there. Outside a git repo, or with `tasks.isolation: none`, tasks write directly into the folder. The worktree starts from your last commit, so uncommitted changes and untracked folders such as `node_modules/` aren't in it.
+
+**The planner sees the repository.** With each goal it gets the repo map: every source file with its public classes, methods and functions, and where the tests are, built from the symbol index without an LLM call. It took about 1,500 tokens for RepoPilot's 116 files, and detail is dropped in steps to fit large repos. Measured on the same goal ("add a `/version` command with a test") and the same model:
+
+| | Without the map | With the map |
+|---|---|---|
+| Files it planned to edit that exist | 0 of 5 (invented `src/repopilot/repl.py`, `commands/`) | `src/main.py`, the real REPL |
+| Assumptions | 4, two of them wrong | 3, all true |
+
+Without it, a plan on an existing repo builds a parallel structure beside the real code.
+
+**Task agents can find existing code.** Every task type has read-only `search_codebase`, `find_symbol` and `read_lines`, so a task like "add retry logging to the orchestrator" can find the orchestrator before changing it. Search results show repo-relative paths, which open the worktree's copy of each file. Their first message depends on the folder: "create the files from scratch" in an empty project, "find the code your task touches first" in an existing one.
 
 Each task agent gets only the tools its task type needs. For example, `review` tasks can read and write files but not run commands, and only `test` and `integrate` tasks get `run_command`. Before a task starts, the outputs of the tasks it depends on are added to its prompt.
 
@@ -673,13 +684,14 @@ repopilot/
 │   │   ├── worktree.py            /plan isolation: git worktree, diff review, apply/keep/discard
 │   │   ├── task_store.py          task state in SQLite (crash-safe)
 │   │   └── recovery.py · status.py
-│   ├── tools/                   agent-callable tools: code search, call graph, files, shell, sources
+│   ├── tools/                   agent-callable tools: code search, call graph, repo map, line reads, files, shell
 │   ├── guardrails/              tool_safety.py: file scoping, command allowlist, read-only MCP ·
 │   │                            budgets.py: step limits and token budgets
 │   ├── retrieval/               code knowledge
 │   │   ├── indexing/              tree-sitter chunking, file watcher, one module per store
 │   │   ├── search/                vector / hybrid search per store, BM25, reranker
-│   │   └── symbol_index.py        symbol and call-graph index
+│   │   ├── symbol_index.py        symbol and call-graph index
+│   │   └── repo_map.py            repository outline for the planner and the repo_map tool
 │   ├── memory/                  conversation sessions, summarisation, semantic cache
 │   ├── protocols/               MCP client and server config
 │   ├── services/                LLM and embedding providers (Gemini / Groq / OpenAI / Anthropic, fastembed)

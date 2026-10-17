@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from langchain.tools import tool
 
 
-from repopilot.tools.sources import add_source
+from repopilot.tools.sources import add_source, display_path
 from repopilot.retrieval.search.factory import get_retriever
 from repopilot.observability.logger import get_logger
 
@@ -57,7 +57,7 @@ def search_codebase(query: str) -> str:
    for chunk in chunks:
        add_source(chunk["source"], chunk["start_line"], chunk["end_line"])
        results.append(
-           f"File: {chunk['source']} (lines {chunk['start_line']}-{chunk['end_line']})\n"
+           f"File: {display_path(chunk['source'])} (lines {chunk['start_line']}-{chunk['end_line']})\n"
            f"Type: {chunk['type']} — {chunk['name']}\n"
            f"Code:\n{chunk['content']}\n"
        )

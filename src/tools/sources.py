@@ -43,7 +43,11 @@ def add_source(path: str, start_line: int, end_line: int | None = None) -> None:
         sources.append(Source(path, int(start_line), int(end_line or start_line)))
 
 
-def _rel(path: str) -> str:
+def display_path(path: str) -> str:
+    """
+    A path relative to the repo (forward slashes): shorter for the model and the
+    user, and inside /plan's worktree it opens the worktree's copy of the file.
+    """
     try:
         return os.path.relpath(path).replace("\\", "/")
     except ValueError:  # different drive on Windows
@@ -68,7 +72,7 @@ def format_sources(sources: list[Source], limit: int = 8) -> list[str]:
             else:
                 merged.append([start, end])
         spans = ", ".join(f"{a}-{b}" if a != b else f"{a}" for a, b in merged)
-        lines.append(f"{_rel(path)}:{spans}")
+        lines.append(f"{display_path(path)}:{spans}")
     if len(by_file) > limit:
         lines.append(f"... and {len(by_file) - limit} more files")
     return lines

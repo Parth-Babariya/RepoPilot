@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage
 from repopilot.guardrails.budgets import agent_limits
 from repopilot.services.llm_service import fallback_middleware, get_llm
 from repopilot.tools.code_search import search_codebase
+from repopilot.tools.repo_tools import read_lines, repo_map
 from repopilot.tools.symbol_tools import find_symbol, find_callers, find_callees
 from repopilot.retrieval.symbol_index import symbols_enabled
 from repopilot.observability.logger import get_logger
@@ -23,6 +24,11 @@ if they are not enough, search further with your tools before answering.
 To search for several things, request all the searches in one step — they run in parallel.
 Reference specific file names, function names and line numbers in your answers.
 If you cannot find the answer in the codebase, say so explicitly."""
+
+REPO_TOOLS_PROMPT = """Two tools save searches:
+- repo_map: an outline of every file and its classes and functions. Use it first for questions
+  about overall structure ("how is this project organised?", "where does X live?").
+- read_lines: open just the lines a search result points to, instead of a whole file."""
 
 SYMBOL_TOOLS_PROMPT = """Choosing a search tool:
 - search_codebase: questions about behaviour or concepts ("how does caching work?").
@@ -74,10 +80,10 @@ async def build_agent(checkpointer):
    llm = get_llm()
    mcp_tools = await get_mcp_tools()
 
-   full_prompt = SYSTEM_PROMPT
+   full_prompt = SYSTEM_PROMPT + "\n\n" + REPO_TOOLS_PROMPT
    # run_command stays for questions about history ("when did this change?" → git log);
    # the safety policy lets read-only commands through and asks about anything else.
-   tools = [search_codebase, run_command, *mcp_tools]
+   tools = [search_codebase, repo_map, read_lines, run_command, *mcp_tools]
 
    if symbols_enabled():
        full_prompt += "\n\n" + SYMBOL_TOOLS_PROMPT

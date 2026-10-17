@@ -8,6 +8,7 @@ from langchain.agents import create_agent
 
 from repopilot.services.llm_service import chat_model, fallback_middleware, response_format
 from repopilot.agents.task_spec import TaskType
+from repopilot.retrieval.repo_map import build_repo_map
 from repopilot.observability.logger import get_logger
 
 logger = get_logger(__name__)
@@ -64,6 +65,8 @@ Rules:
 - 5 to 20 tasks
 - Task IDs must be stable snake_case: task_001, task_002, ...
 - Ordering must form a valid DAG: architecture → schema → config → core → tests → integration
+- Plan against the CURRENT REPOSITORY outline you are given: change existing files where they
+  fit, follow the layout and test style it shows, and list as assumptions only what it doesn't show
 {_TASK_RULES}"""
 
 _REPLAN_SYSTEM_PROMPT = f"""\
@@ -79,6 +82,20 @@ Rules:
 {_TASK_RULES}"""
 
 
+def repository_context() -> str:
+    """
+    The repo map, so the planner sees which files and functions exist instead of
+    guessing (without it, a demo plan had to assume "calc.py already exists with
+    an add function"). Built from the symbol index, no LLM call.
+    """
+    try:
+        outline = build_repo_map()
+    except Exception as e:      # an outline is a help, never a reason to fail planning
+        logger.warning(f"Could not build the repo map: {e}")
+        return ""
+    return f"CURRENT REPOSITORY (outline: files with their classes and functions):\n{outline}"
+
+
 def create_plan(goal: str, extra_context: str = "") -> ExecutionPlan:
     """Call the LLM planner and return a structured ExecutionPlan."""
     llm = chat_model(temperature=0)
@@ -91,7 +108,7 @@ def create_plan(goal: str, extra_context: str = "") -> ExecutionPlan:
         middleware=fallback_middleware(temperature=0),
     )
 
-    user_message = f"Goal: {goal}"
+    user_message = f"Goal: {goal}\n\n{repository_context()}"
     if extra_context:
         user_message += f"\n\nAdditional context / change requests:\n{extra_context}"
 

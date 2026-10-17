@@ -1,9 +1,8 @@
-import os
 from pathlib import Path
 
 from langchain.tools import tool
 
-from repopilot.tools.sources import add_source
+from repopilot.tools.sources import add_source, display_path
 from repopilot.retrieval.symbol_index import get_symbol_store
 from repopilot.observability.logger import get_logger
 
@@ -12,14 +11,6 @@ logger = get_logger(__name__)
 
 _MAX_SNIPPET_LINES = 80
 _MAX_RESULTS       = 40
-
-
-def _rel(path: str) -> str:
-   """Show paths relative to the repo being analysed — shorter for the LLM and the user."""
-   try:
-       return os.path.relpath(path)
-   except ValueError:  # different drive on Windows
-       return path
 
 
 def _snippet(path: str, start: int, end: int) -> str:
@@ -38,7 +29,7 @@ def _ambiguity_note(name: str) -> str:
    definitions = get_symbol_store().find_definitions(name.split(".")[-1])
    if len(definitions) <= 1:
        return ""
-   places = ", ".join(f"{d['qualname']} ({_rel(d['file'])}:{d['start_line']})" for d in definitions[:8])
+   places = ", ".join(f"{d['qualname']} ({display_path(d['file'])}:{d['start_line']})" for d in definitions[:8])
    return (
        f"\nNote: {len(definitions)} symbols are named '{name.split('.')[-1]}': {places}. "
        "Calls are matched by name, so some results may refer to a different one."
@@ -61,7 +52,7 @@ def find_symbol(name: str) -> str:
    for d in definitions[:5]:
        add_source(d["file"], d["start_line"], d["end_line"])
        results.append(
-           f"{d['kind']} {d['qualname']} — {_rel(d['file'])} (lines {d['start_line']}-{d['end_line']})\n"
+           f"{d['kind']} {d['qualname']} — {display_path(d['file'])} (lines {d['start_line']}-{d['end_line']})\n"
            f"{_snippet(d['file'], d['start_line'], d['end_line'])}"
        )
    if len(definitions) > 5:
@@ -83,7 +74,7 @@ def find_callers(name: str) -> str:
 
    for c in callers[:_MAX_RESULTS]:
        add_source(c["file"], c["line"])
-   lines = [f"{c['caller']} — {_rel(c['file'])}:{c['line']}" for c in callers[:_MAX_RESULTS]]
+   lines = [f"{c['caller']} — {display_path(c['file'])}:{c['line']}" for c in callers[:_MAX_RESULTS]]
    if len(callers) > _MAX_RESULTS:
        lines.append(f"... and {len(callers) - _MAX_RESULTS} more call sites.")
    return f"{len(callers)} call site(s) of '{name}':\n" + "\n".join(lines) + _ambiguity_note(name)
@@ -105,7 +96,7 @@ def find_callees(name: str) -> str:
    for c in in_repo[:_MAX_RESULTS]:
        add_source(c["file"], c["line"])
    external = sorted({c["callee"] for c in callees if not c["in_repo"]})
-   lines = [f"{c['callee']} — called from {c['caller']} at {_rel(c['file'])}:{c['line']}" for c in in_repo[:_MAX_RESULTS]]
+   lines = [f"{c['callee']} — called from {c['caller']} at {display_path(c['file'])}:{c['line']}" for c in in_repo[:_MAX_RESULTS]]
    result = (
        f"'{name}' makes {len(in_repo)} call(s) whose name matches a function defined in this codebase "
        "(matched by name only — e.g. a dict's .get() also matches a method named get):\n"

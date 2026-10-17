@@ -5,7 +5,12 @@ from langchain.agents import create_agent
 from repopilot.observability.logger import get_logger
 from repopilot.guardrails.budgets import agent_limits
 from repopilot.services.llm_service import chat_model, fallback_middleware
+from repopilot.guardrails.tool_safety import workspace_root
+from repopilot.retrieval.indexing.code_parser import get_source_files
+from repopilot.tools.code_search import search_codebase
 from repopilot.tools.filesystem_tools import append_file, list_directory, read_file, write_file
+from repopilot.tools.repo_tools import read_lines
+from repopilot.tools.symbol_tools import find_symbol
 from repopilot.tools.terminal_tools import run_command
 from repopilot.agents.task_spec import json_list
 
@@ -18,17 +23,23 @@ logger = get_logger(__name__)
 # Checking the result is not its job (see workflows/task_execution.py).
 # ------------------------------------------------------------------
 
+# Read-only ways to find existing code. Since /plan works in a worktree of a real
+# repo, a task like "add retry logging to the orchestrator" must first find that
+# code; with only list_directory and read_file it could only browse folders.
+# Results show repo-relative paths, which open the worktree's copy of the file.
+FIND = [search_codebase, find_symbol, read_lines]
+
 # Each task type gets a minimal, focused toolset — least privilege per task.
 TOOLS_BY_TYPE: dict[str, list] = {
-    "design":    [read_file, write_file, list_directory],
-    "implement": [read_file, write_file, append_file, list_directory],
-    "test":      [read_file, write_file, append_file, list_directory, run_command],
-    "review":    [read_file, write_file],
-    "integrate": [read_file, write_file, append_file, list_directory, run_command],
-    "configure": [read_file, write_file, list_directory],
+    "design":    [read_file, write_file, list_directory, *FIND],
+    "implement": [read_file, write_file, append_file, list_directory, *FIND],
+    "test":      [read_file, write_file, append_file, list_directory, run_command, *FIND],
+    "review":    [read_file, write_file, *FIND],
+    "integrate": [read_file, write_file, append_file, list_directory, run_command, *FIND],
+    "configure": [read_file, write_file, list_directory, *FIND],
 }
 
-_DEFAULT_TOOLS = [read_file, write_file, list_directory]
+_DEFAULT_TOOLS = [read_file, write_file, list_directory, *FIND]
 _ERROR_CHARS = 2000   # how much of the previous failure a retry sees
 
 
@@ -90,6 +101,32 @@ def _content(msg) -> str:
     return content or ""
 
 
+def opening_message(task: dict) -> str:
+    """The first user message: retry, new project, or change to an existing codebase."""
+    if task.get("retry_count", 0) > 0:
+        return (
+            f"{task['description']}\n\n"
+            "Your previous attempt failed — the reason is in your instructions. Read the files\n"
+            "you wrote, fix the problems, and write the corrected files with write_file."
+        )
+    if not get_source_files(str(workspace_root())):
+        # A new project: create files directly rather than explore an empty directory.
+        return (
+            f"{task['description']}\n\n"
+            "The project directory is empty — there is no existing code to read.\n"
+            "You must CREATE all output files from scratch using write_file.\n"
+            "Do not spend time listing directories. Go directly to writing the output files."
+        )
+    return (
+        f"{task['description']}\n\n"
+        "This is an existing codebase. First find the code your task touches: search_codebase\n"
+        "for behaviour, find_symbol for an exact function or class, read_lines to open the part\n"
+        "a result points to. Search shows the code as it was when the plan started — files that\n"
+        "earlier tasks wrote are in PRIOR TASK OUTPUTS; open those with read_file. Then write\n"
+        "your files with write_file, keeping the existing style and changing only what the task needs."
+    )
+
+
 async def run_task_agent(task: dict, dep_outputs: list[dict] | None = None) -> str:
     """Build a fresh agent for one task, run it, and return its summary of what it did."""
     llm   = chat_model(temperature=0, max_tokens=3000)
@@ -100,24 +137,8 @@ async def run_task_agent(task: dict, dep_outputs: list[dict] | None = None) -> s
     )
     logger.info(f"Building agent for task {task['id']} (type={task['task_type']}, tools={[t.name for t in tools]})")
 
-    if task.get("retry_count", 0) > 0:
-        user_message = (
-            f"{task['description']}\n\n"
-            "Your previous attempt failed — the reason is in your instructions. Read the files\n"
-            "you wrote, fix the problems, and write the corrected files with write_file."
-        )
-    else:
-        # The project directory may be empty on first run — tell the agent to create
-        # files directly rather than spending turns exploring an empty directory.
-        user_message = (
-            f"{task['description']}\n\n"
-            "The project directory may be empty — there is no existing code to read.\n"
-            "You must CREATE all output files from scratch using write_file.\n"
-            "Do not spend time listing directories. Go directly to writing the output files."
-        )
-
     final_state = None
-    async for step in agent.astream({"messages": [{"role": "user", "content": user_message}]},
+    async for step in agent.astream({"messages": [{"role": "user", "content": opening_message(task)}]},
                                     stream_mode="values"):
         last_msg   = step["messages"][-1]
         tool_calls = getattr(last_msg, "tool_calls", None)
