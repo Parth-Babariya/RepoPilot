@@ -15,6 +15,7 @@ _CHAT_PROVIDERS = {
   "anthropic":    "anthropic",
   "gemini":       "google_genai",
   "google_genai": "google_genai",
+  "groq":         "groq",
 }
 
 # Environment variable each provider needs (checked at startup in main.py)
@@ -22,13 +23,14 @@ PROVIDER_API_KEYS = {
   "openai":       "OPENAI_API_KEY",
   "anthropic":    "ANTHROPIC_API_KEY",
   "google_genai": "GOOGLE_API_KEY",
+  "groq":         "GROQ_API_KEY",
 }
 
 
 def chat_provider() -> str:
   name = config["llm"]["provider"]
   if name not in _CHAT_PROVIDERS:
-      raise ValueError(f"Unknown llm.provider '{name}' in config.yaml — use one of: openai, anthropic, gemini")
+      raise ValueError(f"Unknown llm.provider '{name}' in config.yaml — use one of: openai, anthropic, gemini, groq")
   return _CHAT_PROVIDERS[name]
 
 
@@ -44,11 +46,17 @@ def chat_model(model: str | None = None, feature: str | None = None, **kwargs):
   a hung request from freezing a /plan run; it then counts as a failed attempt.
   """
   model = model or config["llm"]["model"]
+  provider = chat_provider()
+  # "provider:model" picks another provider for this one model — e.g. a Groq setup
+  # with fallback_model "gemini:gemini-3.5-flash".
+  prefix, _, rest = model.partition(":")
+  if rest and prefix in _CHAT_PROVIDERS:
+      provider, model = _CHAT_PROVIDERS[prefix], rest
   kwargs.setdefault("max_retries", config["llm"].get("max_retries", 6))
   kwargs.setdefault("timeout", config["llm"].get("timeout_seconds", 120))
   return init_chat_model(
       model,
-      model_provider=chat_provider(),
+      model_provider=provider,
       callbacks=usage_callbacks(model, feature),
       **kwargs,
   )
@@ -75,6 +83,43 @@ def get_fallback_llm(feature: str | None = None, **kwargs):
   if not name or name == config["llm"]["model"]:
       return None
   return chat_model(name, feature=feature, **kwargs)
+
+
+def required_api_keys() -> dict[str, str]:
+  """Env var → why it's needed, for every provider the configured models use (checked at startup)."""
+  needed = {PROVIDER_API_KEYS[chat_provider()]: f"llm.provider is '{config['llm']['provider']}'"}
+  for setting in ("model", "judge_model", "fallback_model"):
+      prefix, _, rest = (config["llm"].get(setting) or "").partition(":")
+      if rest and prefix in _CHAT_PROVIDERS:
+          needed.setdefault(PROVIDER_API_KEYS[_CHAT_PROVIDERS[prefix]], f"llm.{setting} uses {prefix}")
+  return needed
+
+
+# ------------------------------------------------------------------
+# Structured output (judges, planner)
+# ------------------------------------------------------------------
+# Groq validates tool calls server-side and rejects a malformed one with a 400:
+# with the default (tool-calling) method gpt-oss-20b failed 3 of 4 judge calls.
+# Its json_schema mode constrains the output to the schema and passed 4 of 4,
+# so Groq models use it; other providers keep LangChain's default.
+
+def _native_schema(llm) -> bool:
+  return type(llm).__name__ == "ChatGroq"
+
+
+def with_schema(llm, schema):
+  """llm.with_structured_output(schema), using the method that is reliable for the provider."""
+  if _native_schema(llm):
+      return llm.with_structured_output(schema, method="json_schema")
+  return llm.with_structured_output(schema)
+
+
+def response_format(llm, schema):
+  """create_agent's response_format for this model (the same choice as with_schema)."""
+  if _native_schema(llm):
+      from langchain.agents.structured_output import ProviderStrategy
+      return ProviderStrategy(schema)
+  return schema
 
 
 def fallback_middleware(**kwargs) -> list:

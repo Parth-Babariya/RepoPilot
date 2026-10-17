@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field
 
-from repopilot.services.llm_service import get_fallback_llm, get_judge_llm
+from repopilot.services.llm_service import get_fallback_llm, get_judge_llm, with_schema
 
 # ------------------------------------------------------------------
 # Answer critic — LLM-as-judge for /ask answers, before you see them.
@@ -47,15 +49,39 @@ classes, values, what the code does and in what order — supported by the retri
   List each such claim briefly in unsupported_claims."""
 
 
+_TERM = re.compile(r"`([^`\n]{2,80})`|([A-Za-z_][\w.]{3,})")
+
+
+def select_evidence(evidence: list[str], answer: str, limit: int = _EVIDENCE_CHARS) -> str:
+    """
+    The retrieved code most relevant to the answer, within `limit` characters.
+    Tool outputs are split into their chunks (search results are separated by
+    ---), duplicates from repeated searches are dropped, and chunks are kept in
+    order of how many of the answer's terms they contain. Simply cutting the
+    concatenation dropped the chunk that backed the answer, and the critic then
+    flagged true claims as unsupported.
+    """
+    terms = {a or b for a, b in _TERM.findall(answer)}
+    chunks = list(dict.fromkeys(c.strip() for text in evidence for c in text.split("\n---\n") if c.strip()))
+    ranked = sorted(chunks, key=lambda c: -sum(term in c for term in terms))   # stable: ties keep retrieval order
+    picked, size = [], 0
+    for chunk in ranked:
+        if size + len(chunk) > limit:
+            continue
+        picked.append(chunk)
+        size += len(chunk) + 5
+    return "\n---\n".join(picked)
+
+
 async def critique_answer(question: str, answer: str, evidence: list[str], unknown_names: list[str]) -> AnswerVerdict:
     """Judge whether an /ask answer is grounded in the retrieved code (one judge_model call, feature "ask-verify")."""
-    llm = get_judge_llm("ask-verify", temperature=0).with_structured_output(AnswerVerdict)
+    llm = with_schema(get_judge_llm("ask-verify", temperature=0), AnswerVerdict)
     if (fallback := get_fallback_llm("ask-verify", temperature=0)) is not None:
-        llm = llm.with_fallbacks([fallback.with_structured_output(AnswerVerdict)])
+        llm = llm.with_fallbacks([with_schema(fallback, AnswerVerdict)])
 
     prompt = _PROMPT.format(
         question=question,
-        evidence="\n---\n".join(evidence)[-_EVIDENCE_CHARS:] or "(nothing retrieved)",
+        evidence=select_evidence(evidence, answer) or "(nothing retrieved)",
         unknown_names=", ".join(unknown_names) or "(none)",
         answer=answer,
     )

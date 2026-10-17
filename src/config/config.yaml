@@ -62,7 +62,7 @@ llm:
  # Free: Gemini (key from https://aistudio.google.com/apikey → GOOGLE_API_KEY in .env).
  # Model names change — list the ones your key can use: python -m repopilot.services.list_models
  # (a listed model can still refuse new users: gemini-2.5-flash did in Oct 2026 — test with /ask)
- provider: gemini                     # openai | anthropic | gemini
+ provider: gemini                     # openai | anthropic | gemini | groq
  # Free-tier daily caps differ per model: gemini-3.5-flash allows only 20 requests/day
  # (too few for /plan or /eval), so the default is flash-lite. Use flash for one-off /ask.
  model: gemini-3.5-flash-lite
@@ -70,8 +70,20 @@ llm:
  max_retries: 6                       # back off and retry on rate limits (free tiers allow few requests/minute)
  timeout_seconds: 120                 # a request that hangs longer fails (and is retried) instead of freezing the run
  # Used when the main (or judge) model still fails after its retries — e.g. a free-tier model
- # answering 503 "overloaded" for minutes. Empty = no fallback.
+ # answering 503 "overloaded" for minutes. Empty = no fallback. Write "provider:model" to use
+ # another provider, e.g. gemini:gemini-3.5-flash when provider is groq.
  fallback_model: gemini-3.5-flash
+ # Groq (free, very fast; key from https://console.groq.com/keys → GROQ_API_KEY in .env;
+ # models: console.groq.com/docs/models). Its free tier allows 1000 requests/day but only
+ # 8000 tokens/minute per model — one /ask request passes that after a few searches, so
+ # Groq suits the judges (short prompts) better than the agents. Recommended free mix,
+ # which also saves Gemini's daily quota during /eval:
+ #   judge_model: groq:openai/gpt-oss-20b    # qwen/qwen3.8-27b also works
+ # All-Groq (fine for short questions; long ones fall back to Gemini):
+ #   provider: groq
+ #   model: openai/gpt-oss-120b
+ #   judge_model: openai/gpt-oss-20b
+ #   fallback_model: gemini:gemini-3.5-flash
  # Paid OpenAI setup:
  #   provider: openai
  #   model: gpt-5.5
@@ -124,6 +136,9 @@ usage:
  prices:
    gemini-3.5-flash:       {input: 0, output: 0}    # free tier (paid tier is billed differently)
    gemini-3.5-flash-lite:  {input: 0, output: 0}    # free tier
+   openai/gpt-oss-120b:    {input: 0, output: 0}    # Groq free tier
+   openai/gpt-oss-20b:     {input: 0, output: 0}    # Groq free tier
+   qwen/qwen3.8-27b:       {input: 0, output: 0}    # Groq free tier
    BAAI/bge-small-en-v1.5: {input: 0, output: 0}    # local embeddings — always free
    BAAI/bge-base-en-v1.5:  {input: 0, output: 0}
    jinaai/jina-embeddings-v2-base-code: {input: 0, output: 0}

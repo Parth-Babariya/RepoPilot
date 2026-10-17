@@ -40,7 +40,7 @@ Sources:
 | | |
 |---|---|
 | **Code Q&A with RAG** | tree-sitter splits code into functions and classes (Python, JS/TS, Java, Go, Rust, C/C++, C# and more). The chunks are embedded and searched before every answer. Answers render as Markdown and list their sources. |
-| **Runs for free** | The default setup uses Gemini's free tier for the LLM, and local embeddings and reranking (fastembed/ONNX). It costs $0, and indexing needs no API key. Switching to OpenAI or Anthropic is one config line. |
+| **Runs for free** | The default setup uses Gemini's free tier for the LLM, and local embeddings and reranking (fastembed/ONNX). It costs $0, and indexing needs no API key. Groq (also free, and much faster) is built in too, and works well as the judge model next to Gemini (`judge_model: groq:openai/gpt-oss-20b`), which spreads calls over two free quotas. Switching to OpenAI or Anthropic is one config line. |
 | **Measured retrieval** | Local vector search by default. Hybrid mode (adds BM25 keyword search, merged by reciprocal rank fusion) and a cross-encoder reranker are optional. Each setting was benchmarked, and the defaults follow the numbers ([`scripts/benchmark_retrieval.py`](scripts/benchmark_retrieval.py)). |
 | **Call-graph search** | A symbol index records every function, method, class and call site. The agent can answer *"what calls `fail_task`?"* exactly, not by similarity. |
 | **Multi-agent planning** | `/plan <goal>`: a planner LLM builds a dependency graph of tasks, and you approve it or ask for changes. Each task runs with only the tools its type needs. |
@@ -539,7 +539,7 @@ flowchart LR
     repo -- "mounted at /workspace" --> app
     env -- "env_file, never in the image" --> app
     app -- "REDIS_URL" --> redis
-    app --> llm["Gemini / OpenAI /<br/>Anthropic API"]
+    app --> llm["Gemini / Groq /<br/>OpenAI / Anthropic API"]
 ```
 
 API keys are passed in when the container starts and are never copied into the image. Index data is written to `.repopilot/` inside the mounted repo, so it persists between runs. Downloaded models and Redis data are kept in Docker volumes.
@@ -550,7 +550,7 @@ All settings live in [`src/config/config.yaml`](src/config/config.yaml), documen
 
 | Section | Controls |
 |---|---|
-| `llm` | Provider (`gemini` / `openai` / `anthropic`), model, a cheaper `judge_model`, retries, a timeout and a `fallback_model`. To list the Gemini models your key can use, run `python -m repopilot.services.list_models` |
+| `llm` | Provider (`gemini` / `groq` / `openai` / `anthropic`), model, a cheaper `judge_model`, retries, a timeout and a `fallback_model` (which can use another provider: `gemini:gemini-3.5-flash`). To list the Gemini models your key can use, run `python -m repopilot.services.list_models` |
 | `embeddings` | `fastembed` (local and free; runs Hugging Face models like BGE without PyTorch) or `openai`, and the model. Each model gets its own index, so switching is safe |
 | `vector_store`, `qdrant` | Chroma (local, the default) or Qdrant (a server or Qdrant Cloud, via `QDRANT_URL`) |
 | `rag` | `semantic` (vector search) or `hybrid` (vector + BM25 keyword search); works with either store |
@@ -650,7 +650,7 @@ repopilot/
 │   │   └── symbol_index.py        symbol and call-graph index
 │   ├── memory/                  conversation sessions, summarisation, semantic cache
 │   ├── protocols/               MCP client and server config
-│   ├── services/                LLM and embedding providers (Gemini / OpenAI / Anthropic, fastembed)
+│   ├── services/                LLM and embedding providers (Gemini / Groq / OpenAI / Anthropic, fastembed)
 │   ├── skills/                  skill registry + built-in skills (builtin/<name>/SKILL.md)
 │   ├── evaluation/              /eval metrics, LLM judge, runner, /judge_check
 │   └── observability/           logging, usage and cost tracking, /stats
@@ -689,7 +689,7 @@ Tests mirror `src/` (`tests/agents/`, `tests/workflows/`, `tests/retrieval/`, �
 
 ## Tech stack
 
-Python · LangChain · LangGraph · Google Gemini / OpenAI / Anthropic · ChromaDB · Qdrant · fastembed · tree-sitter · Redis (RedisVL) · SQLite · MCP · watchdog · Rich · pytest · Docker
+Python · LangChain · LangGraph · Google Gemini / Groq / OpenAI / Anthropic · ChromaDB · Qdrant · fastembed · tree-sitter · Redis (RedisVL) · SQLite · MCP · watchdog · Rich · pytest · Docker
 
 ---
 

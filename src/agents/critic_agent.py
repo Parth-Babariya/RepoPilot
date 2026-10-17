@@ -6,7 +6,7 @@ from langchain.agents import create_agent
 from pydantic import BaseModel
 
 from repopilot.guardrails.tool_safety import check_path, resolve_path
-from repopilot.services.llm_service import fallback_middleware, get_judge_llm
+from repopilot.services.llm_service import fallback_middleware, get_judge_llm, response_format
 from repopilot.agents.task_spec import json_list
 
 # ------------------------------------------------------------------
@@ -60,7 +60,8 @@ def file_excerpts(task: dict) -> str:
 async def judge_task(task: dict, agent_output: str, check_report: str) -> CriticVerdict:
     """Grade one task with the cheaper judge_model; returns passed / score / reason."""
     llm = get_judge_llm("plan-judge", temperature=0, max_tokens=1000)
-    critic = create_agent(llm, tools=[], system_prompt=_SYSTEM_PROMPT, response_format=CriticVerdict,
+    critic = create_agent(llm, tools=[], system_prompt=_SYSTEM_PROMPT,
+                          response_format=response_format(llm, CriticVerdict),
                           middleware=fallback_middleware(feature="plan-judge", temperature=0, max_tokens=1000))
 
     user_message = f"""TASK: {task['title']}

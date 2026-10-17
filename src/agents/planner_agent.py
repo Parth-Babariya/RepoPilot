@@ -6,7 +6,7 @@ import re
 from pydantic import BaseModel, Field
 from langchain.agents import create_agent
 
-from repopilot.services.llm_service import chat_model, fallback_middleware
+from repopilot.services.llm_service import chat_model, fallback_middleware, response_format
 from repopilot.agents.task_spec import TaskType
 from repopilot.observability.logger import get_logger
 
@@ -87,7 +87,7 @@ def create_plan(goal: str, extra_context: str = "") -> ExecutionPlan:
         llm,
         tools=[],
         system_prompt=_SYSTEM_PROMPT,
-        response_format=ExecutionPlan,
+        response_format=response_format(llm, ExecutionPlan),
         middleware=fallback_middleware(temperature=0),
     )
 
@@ -177,7 +177,8 @@ def replan(goal: str, completed: list[dict], failed: dict, affected: list[dict],
            unaffected: list[dict], existing_ids: list[str]) -> RevisedPlan:
     """Ask the planner for new tasks that replace the failed task and the tasks that depended on it."""
     llm = chat_model(temperature=0)
-    agent = create_agent(llm, tools=[], system_prompt=_REPLAN_SYSTEM_PROMPT, response_format=RevisedPlan,
+    agent = create_agent(llm, tools=[], system_prompt=_REPLAN_SYSTEM_PROMPT,
+                         response_format=response_format(llm, RevisedPlan),
                          middleware=fallback_middleware(temperature=0))
     message = build_replan_message(goal, completed, failed, affected, unaffected, next_task_id(existing_ids))
     result = agent.invoke({"messages": [{"role": "user", "content": message}]})

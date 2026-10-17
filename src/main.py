@@ -10,7 +10,7 @@ from rich.prompt import Confirm, Prompt
 
 from repopilot.config import config
 from repopilot.retrieval.indexing.factory import get_indexer, get_index_inspector
-from repopilot.services.llm_service import PROVIDER_API_KEYS, chat_provider
+from repopilot.services.llm_service import required_api_keys
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from repopilot.agents.qa_agent import build_agent
 from repopilot.memory.conversation import get_checkpointer_db_path
@@ -109,11 +109,12 @@ def check_environment() -> list[str]:
     """
     problems = []
     try:
-        llm_key = PROVIDER_API_KEYS[chat_provider()]
+        needed = required_api_keys()
     except ValueError as e:
         return [str(e)]
-    if not os.getenv(llm_key):
-        problems.append(f"{llm_key} is not set (llm.provider is '{config['llm']['provider']}' in config.yaml)")
+    for key, reason in needed.items():
+        if not os.getenv(key):
+            problems.append(f"{key} is not set ({reason} in config.yaml)")
     if config["embeddings"]["provider"] == "openai" and not os.getenv("OPENAI_API_KEY"):
         problems.append("OPENAI_API_KEY is not set (embeddings.provider is 'openai' in config.yaml)")
     return sorted(set(problems))
@@ -268,7 +269,7 @@ def run():
         console.print("\n[dim]Goodbye![/dim]")
     except Exception as e:
         hint = _PROVIDER_ERRORS.get(type(e).__name__)
-        if hint is None or not type(e).__module__.startswith(("openai", "anthropic", "google", "langchain_google_genai")):
+        if hint is None or not type(e).__module__.startswith(("openai", "anthropic", "google", "langchain_google_genai", "groq")):
             raise
         logger.error(f"Provider error: {e}")
         console.print(f"\n[bold red]{hint}[/bold red]")

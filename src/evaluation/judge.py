@@ -3,7 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from repopilot.evaluation.metrics import EvalQuestion
-from repopilot.services.llm_service import get_fallback_llm, get_judge_llm
+from repopilot.services.llm_service import get_fallback_llm, get_judge_llm, with_schema
 
 # ------------------------------------------------------------------
 # LLM-as-judge eval metrics — the counterpart to metrics.py.
@@ -48,9 +48,9 @@ Score two things from 0 to 1:
 
 async def judge_answer(question: EvalQuestion, answer: str, tool_outputs: list[str]) -> JudgeVerdict:
     """Score one answer with the judge model. Its cost is tracked as feature "eval-judge"."""
-    llm = get_judge_llm("eval-judge", temperature=0).with_structured_output(JudgeVerdict)
+    llm = with_schema(get_judge_llm("eval-judge", temperature=0), JudgeVerdict)
     if (fallback := get_fallback_llm("eval-judge", temperature=0)) is not None:
-        llm = llm.with_fallbacks([fallback.with_structured_output(JudgeVerdict)])
+        llm = llm.with_fallbacks([with_schema(fallback, JudgeVerdict)])
 
     prompt = _JUDGE_PROMPT.format(
         question=question.question,
