@@ -20,16 +20,31 @@ def _strings(value) -> list[str]:
 
 
 def _guard_secrets(tool):
-  """Wrap an MCP tool so it refuses any argument naming a secret file such as .env."""
+  """
+  Wrap an MCP tool so it refuses any argument naming a secret file such as .env,
+  and so a server error comes back to the agent as the tool's result.
+
+  MCP servers report failures as exceptions (GitHub: "Not Found: Resource not
+  found" for a guessed repo or path). Raised, one failed lookup ends the whole
+  answer — it did for 2 of 24 /eval questions. Returned, the agent reads the
+  error and carries on with its other tools, as it does with any tool's "Error: ...".
+  """
   original = tool.coroutine
+
+  def result(message: str):
+      return (message, None) if tool.response_format == "content_and_artifact" else message
 
   @functools.wraps(original)   # keeps the signature, so LangChain still injects `runtime`
   async def guarded(**kwargs):
       if any(is_secret_path(s) for s in _strings(kwargs)):
           logger.warning(f"Blocked MCP tool {tool.name}: argument names a secret file")
-          message = "Error: access to secret files is not allowed"
-          return (message, None) if tool.response_format == "content_and_artifact" else message
-      return await original(**kwargs)
+          return result("Error: access to secret files is not allowed")
+      logger.info(f"MCP tool called: {tool.name}")
+      try:
+          return await original(**kwargs)
+      except Exception as e:
+          logger.warning(f"MCP tool {tool.name} failed: {e}")
+          return result(f"Error from {tool.name}: {e}")
 
   return tool.model_copy(update={"coroutine": guarded})
 

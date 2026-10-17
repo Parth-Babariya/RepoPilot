@@ -118,6 +118,17 @@ def test_mcp_tools_refuse_secret_paths():
     assert calls == ["src/app.py"]
 
 
+def test_mcp_server_errors_come_back_as_the_tool_result():
+    # A raised MCP error used to end the whole /ask answer (2 of 24 eval questions)
+    async def missing_repo(path: str):
+        raise RuntimeError("Not Found: Resource not found")
+
+    tool = StructuredTool.from_function(coroutine=missing_repo, name="get_file_contents", description="get",
+                                        response_format="content_and_artifact")
+    result = asyncio.run(_guard_secrets(tool).ainvoke({"path": "src/app.py"}))
+    assert "Error from get_file_contents" in result and "Not Found" in result
+
+
 def test_run_command_tool_takes_an_optional_directory(in_project):
     from repopilot.tools.terminal_tools import run_command
     (in_project / "sub").mkdir()

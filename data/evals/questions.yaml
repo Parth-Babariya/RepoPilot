@@ -125,7 +125,7 @@
 - id: callees_execute
   question: What does TaskOrchestrator._execute do, step by step?
   expected_files: [workflows/plan_workflow.py]
-  expected_facts: [claim_task, run_subtask_agent, complete_task, fail_task]
+  expected_facts: [claim_task, execute_task, complete_task, fail_task]
 
 - id: callers_get_retriever
   question: Where is get_retriever used?

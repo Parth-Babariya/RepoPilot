@@ -74,10 +74,11 @@ llm:
  # another provider, e.g. gemini:gemini-3.5-flash when provider is groq.
  fallback_model: gemini-3.5-flash
  # Groq (free, very fast; key from https://console.groq.com/keys → GROQ_API_KEY in .env;
- # models: console.groq.com/docs/models). Its free tier allows 1000 requests/day but only
- # 8000 tokens/minute per model — one /ask request passes that after a few searches, so
- # Groq suits the judges (short prompts) better than the agents. Recommended free mix,
- # which also saves Gemini's daily quota during /eval:
+ # models: console.groq.com/docs/models). Free tier, per model: 1000 requests/day,
+ # 8000 tokens/minute and 200,000 tokens/day — one /ask request passes the per-minute limit
+ # after a few searches, so Groq suits the judges (short prompts) better than the agents.
+ # A full /eval spends ~85k judge tokens, so about two runs a day fit. Free mix that takes
+ # the /ask checks and eval judging off Gemini's quota:
  #   judge_model: groq:openai/gpt-oss-20b    # qwen/qwen3.8-27b also works
  # All-Groq (fine for short questions; long ones fall back to Gemini):
  #   provider: groq

@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-116%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [Configuration](#configuration) · [Evaluation](#evaluation) · [Project structure](#project-structure)
@@ -610,13 +610,35 @@ With 24 questions, one question is about 4 points, so small gaps are noise, but 
 
 ### Full `/eval` results
 
-<!-- Fill in from your own /eval runs: run once per row, changing only the setting named. -->
+Measured on 2026-10-17: all 24 questions, 0 errors. Agent `gemini-3.5-flash-lite`, judge `openai/gpt-oss-20b` on Groq, `bge-small` embeddings, Chroma, vector search, call-graph tools on. All of it ran on free tiers.
+
+| Metric | Default configuration |
+|---|---|
+| Retrieval hit rate (top 5) | 88% |
+| Retrieval MRR | 0.63 |
+| Context recall (expected files the agent's tools returned) | 94% |
+| Fact recall (expected facts the answer mentions) | 89% |
+| Faithfulness (LLM judge, 0–1) | 0.91 |
+| Correctness (LLM judge, 0–1) | 0.92 |
+| Average answer time | 17.2 s |
+| Cost per question | $0 (free tiers) |
+
+19 of the 24 answers scored 0.9 or higher on both judge metrics. The eval runs also exposed three problems, which are now fixed:
+- **The summariser removed the question mid-answer.** In this run, an answer that took 10 searches pushed its own question out of the kept window, the question was summarised away, and the agent replied as if the conversation had been reset. That question scored 0. Summarisation now never touches the question being answered.
+- **MCP errors ended answers.** In a run with the call-graph tools off, two GitHub MCP lookups that returned "Not Found" each aborted the whole answer. MCP errors now come back to the agent as tool results.
+- **One expected fact was stale.** It still named `run_subtask_agent`, which was renamed in the restructure.
+
+So these numbers are, if anything, slightly pessimistic for the current code.
+
+<!-- Fill in from your own /eval runs: run once per row, changing only the setting named, with the same judge model. -->
 
 | Configuration | Hit rate | MRR | Faithfulness | Correctness | Cost / question |
 |---|---|---|---|---|---|
 | Vector search only (`symbols.enabled: false`) | | | | | |
 | + call-graph tools (default) | | | | | |
 | + reranking (`rerank.enabled: true`) | | | | | |
+
+Comparing settings takes one `/eval` per row, about 190 model calls each. On free tiers that is more than a day's quota allows: Gemini Flash-Lite gives 500 requests per day per model, and Groq gives 200k tokens per day per model, about two runs of judging.
 
 ## Project structure
 
