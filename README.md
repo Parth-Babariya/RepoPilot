@@ -62,69 +62,140 @@ Sources:
 
 ```mermaid
 flowchart TB
-    dev(["Developer"]) --> repl["REPL · main.py"]
+    dev(["Developer"]) --> repl["main.py · REPL<br/>/ask · /plan · /eval · /stats"]
 
-    repl --> ask["/ask<br/>Q&A agent"]
-    repl --> plan["/plan<br/>planner → approval →<br/>orchestrator"]
-    repl --> evalr["/eval<br/>eval runner"]
-    repl <-. "first question<br/>of a session" .-> cache[("Semantic cache<br/>Redis")]
-
-    evalr --> ask
-    evalr --> ejudge["LLM judge<br/>faithfulness ·<br/>correctness"]
-    plan --> workers["Task agents<br/>+ critic agent"]
-
-    subgraph tools["Agent tools"]
-        search["search_codebase"]
-        symtools["find_symbol<br/>find_callers<br/>find_callees"]
-        ext["Skills · MCP<br/>shell"]
+    subgraph WF["workflows/ — orchestration: what runs, in what order, what happens on failure"]
+        direction LR
+        evalwf["evaluation/<br/>/eval · /judge_check"]
+        askwf["ask_workflow<br/>cache → agent → sources"]
+        planwf["plan_workflow<br/>task loop · retries · re-plan"]
+        hitl{{"approval<br/>you decide"}}
+        exec["task_execution<br/>agent → checks → critic"]
     end
-    ask --> search
-    ask --> symtools
-    ask --> ext
 
-    subgraph knowledge["Code knowledge"]
-        vec[("Vector store<br/>Chroma / Qdrant")] -. optional .-> rerank["BM25 hybrid ·<br/>reranker"]
-        symgraph[("Symbol &<br/>call graph")]
+    subgraph AG["agents/ — LLM roles"]
+        direction LR
+        ejudge["Eval judge"]
+        qa["Q&A agent"]
+        planner["Planner ·<br/>Re-planner"]
+        task["Task agent ×N"]
+        critic["Critic agent"]
     end
-    search --> vec
-    symtools --> symgraph
 
-    subgraph indexing["Indexing"]
-        watcher["File watcher"] --> parser["tree-sitter parser"]
+    subgraph CAP["Capabilities the agents use"]
+        direction LR
+        mem["memory/<br/>sessions · summaries ·<br/>semantic cache"]
+        skills["skills/<br/>trace · review · debug"]
+        proto["protocols/<br/>MCP, read-only"]
+        tools["tools/<br/>code search · call graph ·<br/>files · shell"]
+        retr["retrieval/<br/>tree-sitter index ·<br/>vector + BM25 search"]
     end
-    parser --> vec
-    parser --> symgraph
 
-    subgraph storage["SQLite stores · .repopilot/"]
-        mem[("Sessions")]
-        tasks[("Tasks")]
-        usage[("Usage & cost")]
+    subgraph FND["Foundations"]
+        direction LR
+        cfg["config/"]
+        svc["services/<br/>LLM + embeddings"]
+        obs["observability/<br/>logs · usage · cost"]
+        guard["guardrails/<br/>tool safety"]
     end
-    ask --- mem
-    plan --- tasks
 
-    subgraph models["Models"]
-        llm["Chat LLM<br/>Gemini · OpenAI · Anthropic"]
-        local["Local models · fastembed<br/>embeddings · reranker"]
-    end
-    ask --> llm
-    workers --> llm
-    ejudge --> llm
-    vec -. embed .-> local
-    rerank -.-> local
-    llm -. every call .-> usage
+    repl --> askwf
+    repl --> planwf
+    repl --> evalwf
+    askwf --> qa
+    planwf --> planner
+    planwf <--> hitl
+    planwf --> exec
+    exec --> task
+    exec --> critic
+    evalwf --> qa
+    evalwf --> ejudge
+
+    qa --> tools
+    qa --> mem
+    qa --> skills
+    qa --> proto
+    task --> tools
+    tools --> retr
+    tools --> guard
+    proto --> guard
+    AG -. "every LLM call" .-> svc
+    svc -. "tokens · cost" .-> obs
 
     classDef entry fill:#1f6feb,stroke:#1f6feb,color:#fff
+    classDef flow fill:#0e7490,stroke:#0e7490,color:#fff
     classDef agent fill:#8957e5,stroke:#8957e5,color:#fff
-    classDef store fill:#2da44e,stroke:#2da44e,color:#fff
-    classDef model fill:#bf8700,stroke:#bf8700,color:#fff
+    classDef cap fill:#2da44e,stroke:#2da44e,color:#fff
+    classDef base fill:#6e7781,stroke:#6e7781,color:#fff
+    classDef human fill:#bf8700,stroke:#bf8700,color:#fff
     class dev,repl entry
-    class ask,plan,evalr,workers,ejudge agent
-    class cache,vec,symgraph,mem,tasks,usage store
-    class llm,local model
+    class askwf,planwf,exec,evalwf flow
+    class qa,planner,task,critic,ejudge agent
+    class tools,retr,mem,skills,proto cap
+    class guard,svc,obs,cfg base
+    class hitl human
 ```
 
-The REPL sends each command to one of three agents. `/ask` uses a tool-calling agent that searches the code. `/plan` runs a planner, then several task agents. `/eval` runs the Q&A agent on a fixed question set and scores the results. Everything that needs to persist is stored on disk in a `.repopilot/` folder inside the repo being analysed. The only exception is Redis, which runs as a separate server.
+RepoPilot is built in layers, and each layer only uses the layers below it (a [test](tests/test_architecture.py) enforces this):
+
+- **Workflows** decide what happens, in what order, and what to do when something fails. They hold the retry, re-planning and approval logic, and no prompts.
+- **Agents** are the LLM roles. Each is a prompt plus a model plus a minimal toolset, and none of them decides what runs next.
+- **Capabilities** are what agents can do: search code, follow the call graph, read and write files, remember conversations, load skills, and call MCP servers.
+- **Foundations** apply to everything: every tool call passes through the safety guardrails, and every model call goes through one service that records tokens and cost.
+
+Everything RepoPilot stores lives in a `.repopilot/` folder inside the repo being analysed. Redis, for the optional cache, is the one exception.
+
+### Agents
+
+RepoPilot has **six LLM roles**. Two are true agents that use tools in a loop: the Q&A agent and the task agents. The other four make a single structured call each, with no tools, because their output must fit a fixed format.
+
+| Agent | File | When it runs | What it does | Tools | Model | Output |
+|---|---|---|---|---|---|---|
+| **Q&A agent** | [`agents/qa_agent.py`](src/agents/qa_agent.py) | `/ask`, and each `/eval` question | Answers questions about the code in a loop: think, call a tool, read the result, repeat. Remembers the session. | `search_codebase`, `find_symbol` · `find_callers` · `find_callees`, `run_command`, `load_skill`, read-only MCP | main | Markdown answer + sources |
+| **Planner** | [`agents/planner_agent.py`](src/agents/planner_agent.py) | Start of `/plan` | Turns a goal into a task graph: tasks, dependencies, acceptance criteria, verify commands, assumptions and risks | none | main | `ExecutionPlan` |
+| **Re-planner** | [`agents/planner_agent.py`](src/agents/planner_agent.py) | A task failed every retry | Proposes tasks that replace the failed one and the tasks depending on it | none | main | `RevisedPlan` |
+| **Task agent** (one per task) | [`agents/task_agent.py`](src/agents/task_agent.py) | Each `/plan` task | Builds one task. It sees its task, its dependencies' outputs and, on a retry, why the last attempt failed. | File tools by task type; `run_command` only for `test` / `integrate` | main | Files on disk + a summary |
+| **Critic agent** | [`agents/critic_agent.py`](src/agents/critic_agent.py) | After a task passes the automatic checks | Grades the files the task actually produced against its acceptance criteria, using the check results as evidence | none | judge | Pass/fail, score 0–10, reason |
+| **Eval judge** | [`evaluation/judge.py`](src/evaluation/judge.py) | `/eval` | Scores each answer for faithfulness (backed by the retrieved code?) and correctness | none | judge | Two scores 0–1, reason |
+
+*main* is `llm.model` and *judge* is the cheaper `llm.judge_model`. Some parts look like agents but aren't: the orchestrator loop, the verification checks and the approval steps are ordinary code, so they always behave the same way, and only the roles above use an LLM.
+
+#### How the agents work together in `/plan`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as You
+    participant W as plan_workflow
+    participant P as Planner
+    participant T as Task agent
+    participant V as verification
+    participant C as Critic agent
+
+    W->>P: goal
+    P-->>W: task graph + verify commands + assumptions
+    W->>U: show plan
+    U-->>W: approve (or request changes)
+    loop each ready task
+        W->>T: task + dependency outputs (+ last failure)
+        T-->>W: files written + summary
+        W->>V: run checks
+        alt checks fail
+            V-->>W: report, then retry with the reason
+        else checks pass
+            W->>C: files + check report + summary
+            C-->>W: pass, or fail and retry with the reason
+        end
+    end
+    opt a task failed every retry
+        W->>P: re-plan: what's done, what failed and why
+        P-->>W: replacement tasks
+        W->>U: show revised plan
+        U-->>W: approve or reject
+    end
+```
+
+Each step that can be checked by running code is checked by code, not by the LLM: the verify command, file existence and parsing. The critic only judges what code can't check, namely whether the work meets the acceptance criteria. You approve every plan, including each verify command and any revised plan.
 
 ### `/ask`: answering a question
 
@@ -204,18 +275,18 @@ Chunks follow function and class boundaries, so a search hit is always a complet
 flowchart TD
     goal["/plan goal"] --> exists{"Unfinished<br/>project?"}
     exists -- "resume" --> recover["Recover tasks<br/>interrupted by a crash"]
-    exists -- "none / abandon" --> planner["Planner LLM<br/>tasks · dependencies ·<br/>acceptance criteria ·<br/>verify commands"]
+    exists -- "none / abandon" --> planner["Planner agent<br/>tasks · dependencies ·<br/>acceptance criteria ·<br/>verify commands"]
     planner --> approve{"Human<br/>approval"}
     approve -- "request changes" --> planner
     approve -- "approve" --> store[("Task store<br/>SQLite")]
     store --> ready
     recover --> ready
 
-    subgraph orchestrator["Orchestrator loop"]
+    subgraph orchestrator["Orchestrator loop · plan_workflow"]
         ready["Pick ready tasks<br/>all dependencies done"] --> claim["Claim task<br/>atomic update"]
         claim --> worker["Task agent<br/>tools chosen by task type"]
-        worker --> checks{"Automatic checks<br/>files exist and parse ·<br/>verify_command exits 0"}
-        checks -- "pass" --> judge{"LLM judge<br/>reads the files<br/>score ≥ 6/10?"}
+        worker --> checks{"verification<br/>files exist and parse ·<br/>verify_command exits 0"}
+        checks -- "pass" --> judge{"Critic agent<br/>reads the files<br/>score ≥ 6/10?"}
         checks -- "fail" --> retry["Retry, told why it failed<br/>or failed after max retries"]
         judge -- "pass" --> done["completed"]
         judge -- "fail" --> retry
@@ -223,7 +294,7 @@ flowchart TD
         done --> ready
     end
 
-    retry -- "failed for good" --> replan["Planner proposes tasks<br/>replacing it and<br/>its dependents"]
+    retry -- "failed for good" --> replan["Re-planner agent<br/>tasks replacing it<br/>and its dependents"]
     replan --> approve2{"Human<br/>approval"}
     approve2 -- "approve" --> store
     approve2 -- "reject" --> blocked["Dependents blocked,<br/>run ends as failed"]
