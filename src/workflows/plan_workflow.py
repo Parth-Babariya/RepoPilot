@@ -14,6 +14,9 @@ from repopilot.workflows.task_execution import execute_task
 from repopilot.agents.planner_agent import ExecutionPlan, create_plan, replan, validate_revision
 from repopilot.workflows.approval import present_plan_for_approval
 from repopilot.workflows.recovery import RecoveryManager
+from repopilot.workflows.worktree import open_worktree, review_changes
+from repopilot.guardrails.budgets import BudgetExceeded, budget_exhausted, token_budget
+from repopilot.guardrails.tool_safety import use_workspace
 from repopilot.retrieval.indexing.factory import get_indexer
 from repopilot.observability.logger import get_logger
 
@@ -42,9 +45,11 @@ class TaskOrchestrator:
         self.replans_left = max_replans
         self._handled_failures: set[str] = set()   # failed task IDs already considered for re-planning
 
-    async def run(self, project_id: str) -> None:
+    async def run(self, project_id: str) -> bool:
         """
-        Loop until all tasks reach a terminal state.
+        Loop until all tasks reach a terminal state. Returns True when the
+        project finished, False when it paused because the token budget ran out
+        (its progress is kept; the next /plan resumes it).
 
         Each iteration:
           1. Check progress — exit if nothing pending or in-progress
@@ -55,6 +60,12 @@ class TaskOrchestrator:
         console.print(f"\n[bold blue]Starting execution for project {project_id}[/bold blue]\n")
 
         while True:
+            if message := budget_exhausted():
+                console.print(f"\n[yellow]⏸ {message}[/yellow]")
+                console.print("[yellow]  Progress is saved — run /plan with the same goal to continue "
+                              "(raise budgets.plan_tokens in config.yaml to allow more).[/yellow]")
+                return False
+
             # A task that used up its retries: try to re-plan around it first.
             for failed in self._new_failures(project_id):
                 self._try_replan(project_id, failed)
@@ -87,7 +98,7 @@ class TaskOrchestrator:
                 # instead of resuming this one.
                 status = "completed" if failed == 0 and blocked == 0 else "failed"
                 self.store.finish_project(project_id, status)
-                break
+                return True
 
             ready = self.store.get_ready_tasks(project_id)
             if not ready:
@@ -99,7 +110,7 @@ class TaskOrchestrator:
                     console.print("[yellow]⚠ No tasks are ready — some depend on tasks that don't exist.[/yellow]")
                     console.print("[yellow]  Use /task_status to inspect.[/yellow]")
                     self.store.finish_project(project_id, "failed")
-                    break
+                    return True
                 await asyncio.sleep(5)
                 continue
 
@@ -125,6 +136,11 @@ class TaskOrchestrator:
             result = await execute_task(task, dep_outputs=dep_outputs)
             self.store.complete_task(project_id, task["id"], result)
             console.print(f"[green]✅ Completed:[/green] {label}")
+
+        except BudgetExceeded:
+            # Interrupted, not judged: back to pending without using a retry.
+            self.store.release_task(project_id, task["id"])
+            console.print(f"[yellow]⏸ Paused:[/yellow]    {label}")
 
         except Exception as e:
             error_msg = str(e)
@@ -224,8 +240,17 @@ async def handle_plan_command(goal: str) -> None:
 
       1. Check DB for an unfinished project. If its goal matches, resume it;
          if the goal is different, ask whether to resume it or start the new one
-      2. Otherwise: plan → human approval loop → persist → execute
+      2. Otherwise: plan → human approval loop → persist
+      3. Execute in an isolated git worktree, then review the diff:
+         apply it to your checkout, keep the branch, or discard it
+
+    Every LLM call in the run counts against budgets.plan_tokens.
     """
+    with token_budget("plan_tokens"):
+        await _run_plan(goal)
+
+
+async def _run_plan(goal: str) -> None:
     db_path = config.get("tasks", {}).get("db_path", ".repopilot/tasks.db")
     store   = SQLiteTaskStore(db_path)
     recover = RecoveryManager(store)
@@ -263,8 +288,21 @@ async def handle_plan_command(goal: str) -> None:
         project_id = store.create_project(goal, approved_plan)
         console.print(f"\n[dim]Project {project_id} saved.[/dim]")
 
+    worktree = open_worktree(project_id)
+    if worktree is not None:
+        console.print(f"[dim]Working in a separate git worktree on branch {worktree.branch} — "
+                      "your checkout is untouched until you apply the changes.[/dim]")
+
     orchestrator = TaskOrchestrator(store, max_concurrent=1)
-    await orchestrator.run(project_id)
+    with use_workspace(worktree.workspace if worktree else Path.cwd()):
+        finished = await orchestrator.run(project_id)
+
+    if not finished:
+        if worktree is not None:
+            console.print(f"[dim]The work so far is in {worktree.path}[/dim]")
+        return
+    if worktree is not None and not review_changes(worktree, store.get_project(project_id)["goal"]):
+        return
 
     # Re-index the project directory so /ask follow-up questions can find
     # the files that were just generated by the plan tasks.

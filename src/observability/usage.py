@@ -50,6 +50,29 @@ def track(feature: str, session: str | None = None):
         current_feature.reset(feature_token)
 
 
+# Tokens used by the current command (one /ask, one /plan run), counted by
+# UsageCallback for every LLM call made inside metered(). Token budgets
+# (guardrails/budgets.py) read it; it is a one-item list so the count is shared
+# with the copies of the context that LangGraph runs tools and callbacks in.
+_run_tokens: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar("repopilot_run_tokens", default=None)
+
+
+@contextmanager
+def metered():
+    """Count the tokens of every LLM call made inside this block (see run_tokens())."""
+    token = _run_tokens.set([0])
+    try:
+        yield
+    finally:
+        _run_tokens.reset(token)
+
+
+def run_tokens() -> int | None:
+    """Tokens used so far inside the current metered() block, or None outside one."""
+    counter = _run_tokens.get()
+    return counter[0] if counter is not None else None
+
+
 def _price(model: str) -> dict | None:
     return (config.get("usage", {}).get("prices") or {}).get(model)
 
@@ -225,6 +248,8 @@ class UsageCallback(BaseCallbackHandler):
             input_tokens  = token_usage.get("prompt_tokens", 0)
             output_tokens = token_usage.get("completion_tokens", 0)
 
+        if (counter := _run_tokens.get()) is not None:
+            counter[0] += input_tokens + output_tokens
         get_usage_store().record_call("llm", self.model, input_tokens, output_tokens, latency_ms, self.feature)
 
     def on_llm_error(self, error, *, run_id, **kwargs) -> None:

@@ -3,7 +3,8 @@ from __future__ import annotations
 from langchain.agents import create_agent
 
 from repopilot.observability.logger import get_logger
-from repopilot.services.llm_service import chat_model
+from repopilot.guardrails.budgets import agent_limits
+from repopilot.services.llm_service import chat_model, fallback_middleware
 from repopilot.tools.filesystem_tools import append_file, list_directory, read_file, write_file
 from repopilot.tools.terminal_tools import run_command
 from repopilot.agents.task_spec import json_list
@@ -93,7 +94,10 @@ async def run_task_agent(task: dict, dep_outputs: list[dict] | None = None) -> s
     """Build a fresh agent for one task, run it, and return its summary of what it did."""
     llm   = chat_model(temperature=0, max_tokens=3000)
     tools = TOOLS_BY_TYPE.get(task.get("task_type", ""), _DEFAULT_TOOLS)
-    agent = create_agent(llm, tools=tools, system_prompt=build_system_prompt(task, dep_outputs or []))
+    agent = create_agent(
+        llm, tools=tools, system_prompt=build_system_prompt(task, dep_outputs or []),
+        middleware=[*agent_limits("task_tool_calls"), *fallback_middleware(temperature=0, max_tokens=3000)],
+    )
     logger.info(f"Building agent for task {task['id']} (type={task['task_type']}, tools={[t.name for t in tools]})")
 
     if task.get("retry_count", 0) > 0:

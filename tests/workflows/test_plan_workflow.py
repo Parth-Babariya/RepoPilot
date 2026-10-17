@@ -123,3 +123,24 @@ def test_no_replan_when_budget_is_zero(orchestrator_module, tmp_path):
     run(orchestrator_module, store, pid, failing={"a"}, max_replans=0)
 
     assert statuses(store, pid) == {"a": "failed"}
+
+
+def test_budget_pause_keeps_progress_without_using_retries(orchestrator_module, tmp_path, monkeypatch):
+    from repopilot.guardrails.budgets import BudgetExceeded
+
+    store = SQLiteTaskStore(str(tmp_path / "tasks.db"))
+    pid = store.create_project("goal", make_plan([("a", []), ("b", ["a"])]))
+
+    async def agent_stopped_by_budget(task, dep_outputs=None):
+        raise BudgetExceeded("used up")
+
+    checks = iter([None])                     # budget fine at the first check, used up afterwards
+    monkeypatch.setattr(orchestrator_module, "budget_exhausted", lambda: next(checks, "used up"))
+    orchestrator_module.execute_task = agent_stopped_by_budget
+
+    finished = asyncio.run(orchestrator_module.TaskOrchestrator(store).run(pid))
+
+    assert finished is False
+    assert statuses(store, pid) == {"a": "pending", "b": "pending"}
+    assert all(t["retry_count"] == 0 for t in store.get_all_tasks(pid))
+    assert store.get_latest_approved_project() == pid     # unfinished → the next /plan resumes it

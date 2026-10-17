@@ -23,6 +23,30 @@ tasks:
  db_path: .repopilot/tasks.db
  verify_timeout_seconds: 120   # limit for each task's verify_command (e.g. running its tests)
  max_replans: 1                # times per /plan run a failed task may be re-planned (0 = never)
+ # worktree: tasks work in a separate git worktree on their own branch; when the plan
+ #   finishes you see the diff and apply it to your checkout, keep the branch, or discard it.
+ #   Needs a git repo with at least one commit (otherwise RepoPilot works in place and says so).
+ #   The worktree starts from your last commit — uncommitted changes and untracked files
+ #   (node_modules/, .venv/) aren't in it.
+ # none: tasks write straight into the folder RepoPilot runs in.
+ isolation: worktree
+
+ask:
+ # Each /ask answer is checked before you see it: cited files and line numbers must exist
+ # (code, free), then the judge model checks the answer's claims against the code the agent
+ # retrieved (one cheap LLM call). An answer that fails gets one revision.
+ verify: true
+ verify_with_llm: true
+ max_revisions: 1
+
+budgets:
+ # Hard limits so a looping agent can't run up cost. 0 = no token limit.
+ ask_tokens: 250000      # all LLM calls for one /ask (largest measured so far: ~75k)
+ plan_tokens: 1000000    # all LLM calls for one /plan run (measured: 40k-105k). When it runs out
+                         # the plan pauses with its progress saved; /plan again resumes it.
+ qa_tool_calls: 15       # per /ask answer — past this the agent must answer with what it found
+ task_tool_calls: 40     # per /plan task attempt
+ model_calls: 30         # per agent run — past this the run ends with a message
 
 safety:
  # Agents can only read/write inside the folder RepoPilot runs in, and never .env files.
@@ -44,6 +68,10 @@ llm:
  model: gemini-3.5-flash-lite
  judge_model: gemini-3.5-flash-lite   # cheaper/faster model used only for LLM-as-judge
  max_retries: 6                       # back off and retry on rate limits (free tiers allow few requests/minute)
+ timeout_seconds: 120                 # a request that hangs longer fails (and is retried) instead of freezing the run
+ # Used when the main (or judge) model still fails after its retries — e.g. a free-tier model
+ # answering 503 "overloaded" for minutes. Empty = no fallback.
+ fallback_model: gemini-3.5-flash
  # Paid OpenAI setup:
  #   provider: openai
  #   model: gpt-5.5
@@ -56,7 +84,10 @@ skills:
 
 memory:
  db_path: .repopilot/memory/memory.db
- summarize_at_tokens: 4000
+ # Summarise older messages once a session's history passes this size. Keep it well above
+ # what one answer needs: at 4000, a few search results triggered it mid-answer, the summary
+ # replaced the question and retrieved code, and the agent looped re-running the same searches.
+ summarize_at_tokens: 40000
  keep_last_messages: 20
 
 chromadb:

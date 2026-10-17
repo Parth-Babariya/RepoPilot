@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 import shlex
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
@@ -56,9 +58,31 @@ def _settings() -> dict:
     }
 
 
+# /plan points this at its git worktree while it runs (workflows/worktree.py),
+# so every tool and check works in the worktree without changing the process's
+# current directory — RepoPilot's own data (.repopilot/) stays where it is.
+_workspace: contextvars.ContextVar[Path | None] = contextvars.ContextVar("repopilot_workspace", default=None)
+
+
 def workspace_root() -> Path:
-    """The project folder RepoPilot was started in — agents can't leave it."""
-    return Path.cwd().resolve()
+    """The folder agents work in (the project, or /plan's worktree) — they can't leave it."""
+    return _workspace.get() or Path.cwd().resolve()
+
+
+@contextmanager
+def use_workspace(path: str | Path):
+    """Make agents' relative paths and commands resolve inside `path` for this block."""
+    token = _workspace.set(Path(path).resolve())
+    try:
+        yield
+    finally:
+        _workspace.reset(token)
+
+
+def resolve_path(path: str | Path) -> Path:
+    """An agent-supplied path, made absolute against the workspace (not the process's cwd)."""
+    p = Path(path).expanduser()
+    return p if p.is_absolute() else workspace_root() / p
 
 
 # ------------------------------------------------------------------
@@ -90,7 +114,7 @@ def mcp_read_only() -> bool:
 
 def check_path(path: str, write: bool = False) -> str | None:
     """Return an error message if an agent may not use `path`, else None."""
-    resolved = Path(os.path.realpath(Path(path).expanduser()))
+    resolved = Path(os.path.realpath(resolve_path(path)))
     if _is_secret(resolved):
         return f"Error: access to secret files is not allowed: {path}"
 
@@ -224,6 +248,7 @@ def run_guarded(command: str, cwd: str | None = None, timeout: int = 30,
         return None, "Error: command cannot be empty"
     if cwd is not None and (error := check_path(cwd)):
         return None, error
+    cwd = str(resolve_path(cwd)) if cwd is not None else str(workspace_root())
 
     decision, reason = classify_command(command)
     if decision == "deny":

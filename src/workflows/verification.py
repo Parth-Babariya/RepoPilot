@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from repopilot.config import config
-from repopilot.guardrails.tool_safety import check_path, run_guarded
+from repopilot.guardrails.tool_safety import check_path, resolve_path, run_guarded
 from repopilot.agents.task_spec import json_list
 
 # ------------------------------------------------------------------
@@ -52,7 +52,7 @@ def verify_task(task: dict) -> Verification:
     lines, passed = [], True
 
     files = [f for f in json_list(task.get("output_files")) if check_path(f) is None]
-    missing = [f for f in files if not Path(f).is_file()]
+    missing = [f for f in files if not resolve_path(f).is_file()]
     if missing:
         passed = False
         lines.append(f"✗ missing output files: {', '.join(missing)}")
@@ -60,7 +60,7 @@ def verify_task(task: dict) -> Verification:
         lines.append(f"✓ all {len(files)} output files exist")
 
     for f in files:
-        if f not in missing and (error := _syntax_error(Path(f))):
+        if f not in missing and (error := _syntax_error(resolve_path(f))):
             passed = False
             lines.append(f"✗ {f} does not parse: {error}")
 

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from langchain.agents import create_agent
 from pydantic import BaseModel
 
-from repopilot.guardrails.tool_safety import check_path
-from repopilot.services.llm_service import get_judge_llm
+from repopilot.guardrails.tool_safety import check_path, resolve_path
+from repopilot.services.llm_service import fallback_middleware, get_judge_llm
 from repopilot.agents.task_spec import json_list
 
 # ------------------------------------------------------------------
@@ -43,14 +42,14 @@ Set passed=true if score >= 6. One short sentence for reason."""
 
 def file_excerpts(task: dict) -> str:
     """The task's output files (inside the project), trimmed to fit the critic's prompt."""
-    files = [f for f in json_list(task.get("output_files")) if check_path(f) is None and Path(f).is_file()]
+    files = [f for f in json_list(task.get("output_files")) if check_path(f) is None and resolve_path(f).is_file()]
     if not files:
         return "(no output files)"
     per_file = max(500, _FILE_CHARS // len(files))
     parts = []
     for f in files:
         try:
-            text = Path(f).read_text(encoding="utf-8", errors="replace")
+            text = resolve_path(f).read_text(encoding="utf-8", errors="replace")
         except OSError as e:
             text = f"(could not read: {e})"
         cut = "\n… (truncated)" if len(text) > per_file else ""
@@ -61,7 +60,8 @@ def file_excerpts(task: dict) -> str:
 async def judge_task(task: dict, agent_output: str, check_report: str) -> CriticVerdict:
     """Grade one task with the cheaper judge_model; returns passed / score / reason."""
     llm = get_judge_llm("plan-judge", temperature=0, max_tokens=1000)
-    critic = create_agent(llm, tools=[], system_prompt=_SYSTEM_PROMPT, response_format=CriticVerdict)
+    critic = create_agent(llm, tools=[], system_prompt=_SYSTEM_PROMPT, response_format=CriticVerdict,
+                          middleware=fallback_middleware(feature="plan-judge", temperature=0, max_tokens=1000))
 
     user_message = f"""TASK: {task['title']}
 DESCRIPTION: {task['description']}

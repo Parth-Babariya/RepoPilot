@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 
 from repopilot.tools.sources import Source, collect_sources
 from repopilot.config import config
+from repopilot.guardrails.budgets import budget_exhausted, token_budget
+from repopilot.workflows.answer_verification import AnswerCheck, max_revisions, verify_answer
 from repopilot.observability.logger import get_logger
 from repopilot.observability.usage import get_usage_store
 
@@ -16,6 +18,15 @@ class QueryResult:
     sources: list[Source] = field(default_factory=list)
     cached: bool = False
     error: bool = False
+    check: AnswerCheck | None = None   # result of answer verification (None = not checked)
+    revised: bool = False              # the answer was rewritten after failing a check
+
+
+_REVISION_PROMPT = """An automatic check of your last answer found problems:
+{problems}
+Look at the code again with your tools if you need to, then write your complete corrected
+answer (the whole answer, not only the changes). State only what the code supports; if
+something can't be confirmed from the code, say so."""
 
 
 def _content(message) -> str:
@@ -28,6 +39,24 @@ def _content(message) -> str:
 
 def _elapsed_ms(started: float) -> float:
     return (time.perf_counter() - started) * 1000
+
+
+def _tool_outputs(messages) -> list[str]:
+    return [_content(m) for m in messages if getattr(m, "type", "") == "tool"]
+
+
+async def _ask(agent, text: str, agent_config: dict) -> tuple[str, list[str]]:
+    """
+    Send one message to the agent. Returns its answer and the tool outputs of
+    this turn — the code it retrieved. A follow-up that used no tools ("explain
+    that more") is backed by the code retrieved earlier in the session instead.
+    """
+    response = await agent.ainvoke({"messages": [{"role": "user", "content": text}]}, agent_config)
+    messages = response["messages"]
+    start = next((i for i in range(len(messages) - 1, -1, -1)
+                  if getattr(messages[i], "type", "") == "human" and _content(messages[i]) == text), -1)
+    evidence = _tool_outputs(messages[start + 1:]) or _tool_outputs(messages)[-10:]
+    return _content(messages[-1]), evidence
 
 
 async def _has_history(agent, agent_config: dict) -> bool:
@@ -58,6 +87,10 @@ async def handle_query(
     have made, including search_codebase) entirely. A miss falls through to
     the normal agent call and stores the fresh answer for next time.
 
+    Before it is returned, the answer is verified (workflows/answer_verification.py):
+    its file/line references must exist and the answer critic must find its
+    claims backed by the retrieved code; a failure gets one revision.
+
     The cache is keyed on the question text alone, so it is only used for the
     first question in a session. A follow-up like "explain that more" depends
     on the earlier conversation and must never get (or store) a cached answer.
@@ -83,22 +116,33 @@ async def handle_query(
             get_usage_store().record_question(cache_hit=True, latency_ms=_elapsed_ms(started))
             return QueryResult(cached_response, cached=True)
 
+    # Answer → verify (citations, then the answer critic) → at most
+    # ask.max_revisions rewrites. Every LLM call here counts against budgets.ask_tokens.
+    revised = False
     try:
-        with collect_sources() as sources:
-            response = await agent.ainvoke(
-                {"messages": [{"role": "user", "content": question}]}, agent_config
-            )
-        answer = _content(response["messages"][-1])
+        with token_budget("ask_tokens"), collect_sources() as sources:
+            answer, evidence = await _ask(agent, question, agent_config)
+            check = None if budget_exhausted() else await verify_answer(question, answer, sources, evidence)
+            for _ in range(max_revisions()):
+                if check is None or check.passed or budget_exhausted():
+                    break
+                logger.info(f"Answer failed verification, asking for a revision: {check.feedback}")
+                problems = "\n".join(f"- {f}" for f in check.feedback)
+                answer, more = await _ask(agent, _REVISION_PROMPT.format(problems=problems), agent_config)
+                evidence += more
+                revised = True
+                check = await verify_answer(question, answer, sources, evidence)
     except Exception as e:
         logger.error(f"Agent error: {e}")
         return QueryResult(f"**Error:** {e}", error=True)
     get_usage_store().record_question(cache_hit=False, latency_ms=_elapsed_ms(started))
 
-    if use_cache:
+    # Never cache an answer that failed its checks.
+    if use_cache and (check is None or check.passed):
         try:
             ttl = config.get("semantic_cache", {}).get("ttl", 86400)
             await semantic_cache.put(question, answer, domain=cache_domain, model=model, ttl=ttl)
         except Exception as e:
             logger.warning(f"Semantic cache store failed: {e}")
 
-    return QueryResult(answer, sources=sources)
+    return QueryResult(answer, sources=sources, check=check, revised=revised)

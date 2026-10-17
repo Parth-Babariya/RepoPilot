@@ -40,10 +40,12 @@ def chat_model(model: str | None = None, feature: str | None = None, **kwargs):
   feature overrides the caller's context label (e.g. "summarize").
 
   max_retries makes the SDK back off and retry on rate limits — important on
-  free tiers, which allow only a handful of requests per minute.
+  free tiers, which allow only a handful of requests per minute. timeout stops
+  a hung request from freezing a /plan run; it then counts as a failed attempt.
   """
   model = model or config["llm"]["model"]
   kwargs.setdefault("max_retries", config["llm"].get("max_retries", 6))
+  kwargs.setdefault("timeout", config["llm"].get("timeout_seconds", 120))
   return init_chat_model(
       model,
       model_provider=chat_provider(),
@@ -61,6 +63,26 @@ def get_llm(feature: str | None = None):
 def get_judge_llm(feature: str, **kwargs):
   """The cheaper model used for LLM-as-judge (llm.judge_model, falling back to llm.model)."""
   return chat_model(config["llm"].get("judge_model") or config["llm"]["model"], feature=feature, **kwargs)
+
+
+def get_fallback_llm(feature: str | None = None, **kwargs):
+  """
+  The model to switch to when the main one keeps failing (llm.fallback_model),
+  or None if none is configured. It is used only after the main model's own
+  retries are used up — e.g. a free-tier model returning 503 "overloaded" for minutes.
+  """
+  name = config["llm"].get("fallback_model")
+  if not name or name == config["llm"]["model"]:
+      return None
+  return chat_model(name, feature=feature, **kwargs)
+
+
+def fallback_middleware(**kwargs) -> list:
+  """Agent middleware that retries a failed model call on llm.fallback_model ([] if not configured)."""
+  from langchain.agents.middleware import ModelFallbackMiddleware
+
+  fallback = get_fallback_llm(**kwargs)
+  return [ModelFallbackMiddleware(fallback)] if fallback is not None else []
 
 
 # ------------------------------------------------------------------

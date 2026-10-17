@@ -1,6 +1,7 @@
 from langchain.agents import create_agent
 
-from repopilot.services.llm_service import get_llm
+from repopilot.guardrails.budgets import agent_limits
+from repopilot.services.llm_service import fallback_middleware, get_llm
 from repopilot.tools.code_search import search_codebase
 from repopilot.tools.symbol_tools import find_symbol, find_callers, find_callees
 from repopilot.retrieval.symbol_index import symbols_enabled
@@ -51,5 +52,7 @@ async def build_agent(checkpointer):
        checkpointer=checkpointer,
        # Summarise older messages once the conversation passes
        # memory.summarize_at_tokens so long sessions don't overflow the context window.
-       middleware=[get_summarization_middleware()],
+       # Then: a step limit and the /ask token budget, so a looping agent stops
+       # cleanly, and llm.fallback_model if the main model keeps failing.
+       middleware=[get_summarization_middleware(), *agent_limits("qa_tool_calls"), *fallback_middleware()],
    )

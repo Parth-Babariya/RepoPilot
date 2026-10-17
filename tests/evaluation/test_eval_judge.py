@@ -25,6 +25,7 @@ class _FakeJudgeLLM:
 def _run_judge(monkeypatch, verdict, tool_outputs):
     fake = _FakeJudgeLLM(verdict)
     monkeypatch.setattr(judge, "get_judge_llm", lambda feature, **kw: fake)
+    monkeypatch.setattr(judge, "get_fallback_llm", lambda feature, **kw: None)
     question = EvalQuestion(id="q", question="What calls fail_task?", expected_facts=["_execute"])
     result = asyncio.run(judge_answer(question, "TaskOrchestrator._execute calls it.", tool_outputs))
     return result, fake.prompt

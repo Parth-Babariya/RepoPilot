@@ -286,6 +286,18 @@ class SQLiteTaskStore:
             )
         logger.info(f"Task {task_id} failed: {error[:80]}")
 
+    def release_task(self, project_id: str, task_id: str) -> None:
+        """
+        IN_PROGRESS → PENDING without using a retry: the task was interrupted
+        (token budget used up), not judged, so the next /plan run starts it again.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                """UPDATE tasks SET status = 'pending', started_at = NULL
+                   WHERE project_id = ? AND id = ? AND status = 'in_progress'""",
+                (project_id, task_id)
+            )
+
     def block_task(self, project_id: str, task_id: str, reason: str) -> None:
         with self._conn() as conn:
             conn.execute(

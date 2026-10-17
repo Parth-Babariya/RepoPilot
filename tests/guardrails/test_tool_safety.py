@@ -127,3 +127,17 @@ def test_run_command_tool_takes_an_optional_directory(in_project):
                                                "directory": "sub"})
     assert "does not exist" in run_command.invoke({"command": "ls", "directory": "nope"})
     assert "outside the project" in run_command.invoke({"command": "ls", "directory": ".."})
+
+
+def test_use_workspace_moves_tools_and_commands_without_changing_cwd(in_project):
+    # /plan's worktree: relative paths and commands resolve there, not in the process's cwd
+    worktree = in_project / "wt"
+    worktree.mkdir()
+    with safety.use_workspace(worktree):
+        assert write_file.invoke({"file_path": "made.txt", "content": "x"}).startswith("Written")
+        assert "outside" in write_file.invoke({"file_path": "../made.txt", "content": "x"})
+        code, output = run_guarded(f'"{sys.executable}" -c "import os; print(os.getcwd())"', pre_approved=True)
+        assert code == 0 and output.strip().endswith("wt")
+    assert (worktree / "made.txt").exists()
+    assert not (in_project / "made.txt").exists()
+    assert safety.workspace_root() == in_project.resolve()   # restored after the block

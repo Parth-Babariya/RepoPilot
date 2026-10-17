@@ -69,6 +69,12 @@ def print_answer(result: QueryResult) -> None:
         console.print("\n[dim]Sources:[/dim]")
         for line in format_sources(result.sources):
             console.print(f"[dim]  • {line}[/dim]", highlight=False)
+    if result.check is not None:
+        if result.check.passed:
+            when = "after one revision" if result.revised else ""
+            console.print(f"[dim]✓ Checked{' ' + when if when else ''}: {escape(result.check.summary)}[/dim]")
+        else:
+            console.print(f"[yellow]⚠ Not verified — {escape(result.check.summary)}[/yellow]")
     console.print()
 
 

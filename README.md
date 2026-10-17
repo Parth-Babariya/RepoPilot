@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-116%20passing-brightgreen)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [Configuration](#configuration) · [Evaluation](#evaluation) · [Project structure](#project-structure)
@@ -18,7 +18,7 @@
 
 ---
 
-Run RepoPilot inside a repository and ask questions in plain English. It searches the code before it answers, cites the files it used, and can trace exactly what calls what. Give it a goal with `/plan`: a planner breaks the goal into tasks, you approve the plan, and a team of agents builds it. Each task is checked by actually running its tests and then by an LLM judge. When a task keeps failing, the planner proposes a revised plan.
+Run RepoPilot inside a repository and ask questions in plain English. It searches the code before it answers, cites the files it used, and can trace exactly what calls what. Give it a goal with `/plan`: a planner breaks the goal into tasks, you approve the plan, and a team of agents builds it. Each task is checked by actually running its tests and then by an LLM judge. When a task keeps failing, the planner proposes a revised plan. The plan works in its own git worktree, so nothing reaches your checkout until you've seen the diff. Answers to `/ask` are checked before you see them.
 
 ```
 > /ask what happens when a plan task fails?
@@ -46,6 +46,9 @@ Sources:
 | **Multi-agent planning** | `/plan <goal>`: a planner LLM builds a dependency graph of tasks, and you approve it or ask for changes. Each task runs with only the tools its type needs. |
 | **Verified by execution** | After each task the system checks its files exist and parse, then runs the task's tests (a `verify_command` you approved with the plan). Only then does an LLM judge grade the actual files. An agent can't pass by just *saying* the tests pass. |
 | **Self-correcting** | A retry is told exactly why the last attempt failed. If a task fails every retry, the planner proposes new tasks to replace it and its dependents, for your approval. |
+| **Self-checking answers** | Before an `/ask` answer is shown, code checks that every file and line it cites exists, then a cheap judge model checks its claims against the code the agent actually retrieved. An answer that fails is sent back once, with the problems listed. |
+| **Isolated execution** | `/plan` works in a separate git worktree on its own branch. When it finishes you see the diff and choose: apply it to your checkout (staged, not committed), keep the branch, or discard it. |
+| **Budgets and resilience** | Every agent has a tool-call and model-call limit, and every `/ask` and `/plan` a token budget. A limit stops work cleanly, and a paused `/plan` resumes later. Model calls time out, retry with backoff, and switch to a fallback model if the main one keeps failing. |
 | **Tool safety** | Agents can only touch files inside the project and never `.env` files. Common read-only, build and test commands run directly; anything else asks you first. MCP is read-only, so the agent can't push code or open PRs. |
 | **Crash-safe execution** | Task state lives in SQLite (WAL mode). Tasks interrupted by a crash are recovered on the next run. |
 | **Live index** | A file watcher re-indexes changed files within seconds. Unchanged files are never re-embedded. |
@@ -67,8 +70,8 @@ flowchart TB
     subgraph WF["workflows/ — orchestration: what runs, in what order, what happens on failure"]
         direction LR
         evalwf["evaluation/<br/>/eval · /judge_check"]
-        askwf["ask_workflow<br/>cache → agent → sources"]
-        planwf["plan_workflow<br/>task loop · retries · re-plan"]
+        askwf["ask_workflow<br/>cache → agent →<br/>checks → revise"]
+        planwf["plan_workflow<br/>task loop · retries ·<br/>re-plan · worktree"]
         hitl{{"approval<br/>you decide"}}
         exec["task_execution<br/>agent → checks → critic"]
     end
@@ -77,6 +80,7 @@ flowchart TB
         direction LR
         ejudge["Eval judge"]
         qa["Q&A agent"]
+        acritic["Answer critic"]
         planner["Planner ·<br/>Re-planner"]
         task["Task agent ×N"]
         critic["Critic agent"]
@@ -94,15 +98,16 @@ flowchart TB
     subgraph FND["Foundations"]
         direction LR
         cfg["config/"]
-        svc["services/<br/>LLM + embeddings"]
+        svc["services/<br/>LLM + embeddings ·<br/>timeouts · fallback"]
         obs["observability/<br/>logs · usage · cost"]
-        guard["guardrails/<br/>tool safety"]
+        guard["guardrails/<br/>tool safety · budgets"]
     end
 
     repl --> askwf
     repl --> planwf
     repl --> evalwf
     askwf --> qa
+    askwf --> acritic
     planwf --> planner
     planwf <--> hitl
     planwf --> exec
@@ -130,7 +135,7 @@ flowchart TB
     classDef human fill:#bf8700,stroke:#bf8700,color:#fff
     class dev,repl entry
     class askwf,planwf,exec,evalwf flow
-    class qa,planner,task,critic,ejudge agent
+    class qa,acritic,planner,task,critic,ejudge agent
     class tools,retr,mem,skills,proto cap
     class guard,svc,obs,cfg base
     class hitl human
@@ -141,24 +146,25 @@ RepoPilot is built in layers, and each layer only uses the layers below it (a [t
 - **Workflows** decide what happens, in what order, and what to do when something fails. They hold the retry, re-planning and approval logic, and no prompts.
 - **Agents** are the LLM roles. Each is a prompt plus a model plus a minimal toolset, and none of them decides what runs next.
 - **Capabilities** are what agents can do: search code, follow the call graph, read and write files, remember conversations, load skills, and call MCP servers.
-- **Foundations** apply to everything: every tool call passes through the safety guardrails, and every model call goes through one service that records tokens and cost.
+- **Foundations** apply to everything: every tool call passes through the safety guardrails, every agent runs under step and token limits, and every model call goes through one service that adds timeouts, retries and a fallback model and records tokens and cost.
 
 Everything RepoPilot stores lives in a `.repopilot/` folder inside the repo being analysed. Redis, for the optional cache, is the one exception.
 
 ### Agents
 
-RepoPilot has **six LLM roles**. Two are true agents that use tools in a loop: the Q&A agent and the task agents. The other four make a single structured call each, with no tools, because their output must fit a fixed format.
+RepoPilot has **seven LLM roles**. Two are true agents that use tools in a loop: the Q&A agent and the task agents. The other five make a single structured call each, with no tools, because their output must fit a fixed format.
 
 | Agent | File | When it runs | What it does | Tools | Model | Output |
 |---|---|---|---|---|---|---|
 | **Q&A agent** | [`agents/qa_agent.py`](src/agents/qa_agent.py) | `/ask`, and each `/eval` question | Answers questions about the code in a loop: think, call a tool, read the result, repeat. Remembers the session. | `search_codebase`, `find_symbol` · `find_callers` · `find_callees`, `run_command`, `load_skill`, read-only MCP | main | Markdown answer + sources |
+| **Answer critic** | [`agents/answer_critic.py`](src/agents/answer_critic.py) | After each `/ask` answer passes the citation checks | Checks that the answer's claims about the code are backed by the code the agent retrieved, and lists any that aren't so the agent can revise | none | judge | Grounded yes/no, unsupported claims |
 | **Planner** | [`agents/planner_agent.py`](src/agents/planner_agent.py) | Start of `/plan` | Turns a goal into a task graph: tasks, dependencies, acceptance criteria, verify commands, assumptions and risks | none | main | `ExecutionPlan` |
 | **Re-planner** | [`agents/planner_agent.py`](src/agents/planner_agent.py) | A task failed every retry | Proposes tasks that replace the failed one and the tasks depending on it | none | main | `RevisedPlan` |
 | **Task agent** (one per task) | [`agents/task_agent.py`](src/agents/task_agent.py) | Each `/plan` task | Builds one task. It sees its task, its dependencies' outputs and, on a retry, why the last attempt failed. | File tools by task type; `run_command` only for `test` / `integrate` | main | Files on disk + a summary |
 | **Critic agent** | [`agents/critic_agent.py`](src/agents/critic_agent.py) | After a task passes the automatic checks | Grades the files the task actually produced against its acceptance criteria, using the check results as evidence | none | judge | Pass/fail, score 0–10, reason |
 | **Eval judge** | [`evaluation/judge.py`](src/evaluation/judge.py) | `/eval` | Scores each answer for faithfulness (backed by the retrieved code?) and correctness | none | judge | Two scores 0–1, reason |
 
-*main* is `llm.model` and *judge* is the cheaper `llm.judge_model`. Some parts look like agents but aren't: the orchestrator loop, the verification checks and the approval steps are ordinary code, so they always behave the same way, and only the roles above use an LLM.
+*main* is `llm.model` and *judge* is the cheaper `llm.judge_model`. Some parts look like agents but aren't: the orchestrator loop, the verification and citation checks, the approval steps and the worktree review are ordinary code, so they always behave the same way, and only the roles above use an LLM.
 
 #### How the agents work together in `/plan`
 
@@ -176,6 +182,7 @@ sequenceDiagram
     P-->>W: task graph + verify commands + assumptions
     W->>U: show plan
     U-->>W: approve (or request changes)
+    Note over W,C: tasks work in a separate git worktree, on their own branch
     loop each ready task
         W->>T: task + dependency outputs (+ last failure)
         T-->>W: files written + summary
@@ -193,6 +200,8 @@ sequenceDiagram
         W->>U: show revised plan
         U-->>W: approve or reject
     end
+    W->>U: diff of everything the plan changed
+    U-->>W: apply to checkout · keep branch · discard
 ```
 
 Each step that can be checked by running code is checked by code, not by the LLM: the verify command, file existence and parsing. The critic only judges what code can't check, namely whether the work meets the acceptance criteria. You approve every plan, including each verify command and any revised plan.
@@ -208,6 +217,7 @@ sequenceDiagram
     participant A as Q&A agent
     participant L as LLM
     participant T as Tools
+    participant V as Answer checks
 
     U->>R: /ask how are failed tasks retried?
     Note over R,C: Only for the first question of a session.<br/>Follow-ups depend on history, so they skip the cache.
@@ -225,12 +235,24 @@ sequenceDiagram
         end
         L-->>A: final Markdown answer
         A-->>R: answer + sources
-        R->>C: store answer (TTL)
-        R-->>U: answer + Sources list
+        R->>V: cited files and lines exist?<br/>claims backed by the retrieved code?
+        alt a check fails
+            V-->>R: the problems
+            R->>A: revise once, told what was wrong
+            A-->>R: corrected answer
+        end
+        R->>C: store answer (only if it passed)
+        R-->>U: answer + Sources + check result
     end
 ```
 
 The agent chooses its tools itself. Questions about behaviour ("how does caching work?") go to `search_codebase`. Exact structural questions ("what calls `fail_task`?") go to the call-graph tools, which read the symbol index directly instead of guessing by similarity.
+
+**Answers are checked before you see them**, in the same order as `/plan` tasks: code first, then an LLM only for what code can't check ([`answer_verification.py`](src/workflows/answer_verification.py)).
+1. **Citations (code).** Every file the answer cites (`src/x.py:40-52`, `x.py (lines 40-52)`, …) must exist, and every cited line must be inside it. A wrong citation fails the answer without spending a model call.
+2. **Grounding (answer critic).** The judge model reads the answer next to the code the agent retrieved for it, and lists claims about the code that nothing retrieved supports. Names the answer formats as code but that appear nowhere in that code are passed to it as hints.
+
+A failing answer goes back to the agent once, with the problems listed, and it may search again before rewriting. The check result is printed under the answer (`✓ Checked: …` or `⚠ Not verified — …`), and an answer that still fails is never cached. Turn it off, or keep only the free citation checks, under `ask:` in the config.
 
 ### Retrieval
 
@@ -279,8 +301,9 @@ flowchart TD
     planner --> approve{"Human<br/>approval"}
     approve -- "request changes" --> planner
     approve -- "approve" --> store[("Task store<br/>SQLite")]
-    store --> ready
-    recover --> ready
+    store --> wt["Git worktree<br/>own branch · your<br/>checkout untouched"]
+    recover --> wt
+    wt --> ready
 
     subgraph orchestrator["Orchestrator loop · plan_workflow"]
         ready["Pick ready tasks<br/>all dependencies done"] --> claim["Claim task<br/>atomic update"]
@@ -296,9 +319,12 @@ flowchart TD
 
     retry -- "failed for good" --> replan["Re-planner agent<br/>tasks replacing it<br/>and its dependents"]
     replan --> approve2{"Human<br/>approval"}
-    approve2 -- "approve" --> store
+    approve2 -- "approve: new tasks saved" --> ready
     approve2 -- "reject" --> blocked["Dependents blocked,<br/>run ends as failed"]
-    ready -- "nothing left to run" --> reindex["Re-index generated code<br/>so /ask can answer about it"]
+    ready -- "token budget used up" --> paused["Paused, progress saved<br/>next /plan resumes"]
+    ready -- "nothing left to run" --> review{"You review<br/>the diff"}
+    review -- "apply" --> reindex["Staged in your checkout ·<br/>re-indexed for /ask"]
+    review -- "keep / discard" --> kept["Branch kept<br/>or deleted"]
 ```
 
 **Checks come before the judge.** The agent's own summary is the least reliable evidence, because an agent can claim the tests pass when they don't. So after each task the system checks things itself:
@@ -310,6 +336,13 @@ Only then does the LLM judge grade the task, and it sees the actual files and ch
 
 **Failures feed back.** A retry gets the reason the last attempt failed, such as the failing test output or the judge's reason, so it can fix the problem rather than repeat it. If a task fails every retry, the planner is shown what's done, what failed and why, and which tasks depended on it. It proposes replacement tasks: splitting the work, changing the approach, or dropping something that isn't essential. You approve this revision on the same screen as the original plan. Tasks that don't depend on the failure are left alone. `tasks.max_replans` limits how often this happens per run.
 
+**Isolated in a git worktree.** Tasks write files and run commands, but not in your checkout. `/plan` creates a [git worktree](https://git-scm.com/docs/git-worktree), a second checkout of the repo on its own branch (`repopilot/plan-<id>`), under `.repopilot/worktrees/`. Every tool and check works there. RepoPilot's process doesn't change directory: the guardrails hold a per-run workspace root that file paths and commands resolve against. When the plan ends you see `git diff --stat` and choose:
+- **apply**: the changes arrive in your checkout as staged, uncommitted changes (`git merge --squash`), so you review them and make the commit
+- **keep**: the branch stays, to diff or merge later
+- **discard**: the worktree and branch are deleted
+
+An interrupted or paused plan keeps its worktree, and resuming continues there. Outside a git repo, or with `tasks.isolation: none`, tasks write directly into the folder. The worktree starts from your last commit, so uncommitted changes and untracked folders such as `node_modules/` aren't in it.
+
 Each task agent gets only the tools its task type needs. For example, `review` tasks can read and write files but not run commands, and only `test` and `integrate` tasks get `run_command`. Before a task starts, the outputs of the tasks it depends on are added to its prompt.
 
 #### Task lifecycle
@@ -319,7 +352,7 @@ stateDiagram-v2
     [*] --> pending
     pending --> in_progress : claimed by orchestrator
     in_progress --> completed : checks and judge passed
-    in_progress --> pending : failed with retries left, or crash recovery
+    in_progress --> pending : failed with retries left, crash recovery,<br/>or paused by the token budget (no retry used)
     in_progress --> failed : retries exhausted
     pending --> blocked : a dependency failed
     failed --> replaced : approved re-plan
@@ -352,7 +385,23 @@ Agents read untrusted text: repository files, GitHub issues, and code comments t
 - **Files.** Paths must resolve inside the project folder, symlinks included. `.env` files can never be read or written, while `.env.example` is fine. `.git/` and `.repopilot/` can't be written.
 - **Commands.** Tests, linters and read-only commands run directly. Anything else is shown to you first. Command chaining, pipes and redirection always need approval, because they can hide a second command.
 - **MCP.** Only tools that read are loaded, such as GitHub `get_*`/`list_*`/`search_*` and filesystem `read_*`. The agent can't push files, open or merge PRs, or edit files through MCP, and any MCP call that names a `.env` file is refused.
-- **Limits.** An allowlisted command such as `pytest` still runs code the agent wrote. For full isolation, run RepoPilot [in Docker](#run-with-docker).
+- **Limits.** `/plan`'s file changes stay in its worktree until you apply them, but an allowlisted command such as `pytest` still runs code the agent wrote, with your permissions. For full isolation, run RepoPilot [in Docker](#run-with-docker).
+
+### Budgets and resilience
+
+An agent that loops, or a provider that hangs, should cost a bounded amount and then stop cleanly. Limits are enforced as LangChain agent middleware ([`guardrails/budgets.py`](src/guardrails/budgets.py)). Tokens are counted by the usage tracker that already sees every LLM call, so the guardrail only decides when to stop.
+
+| Limit (`budgets:`) | Default | When it's reached |
+|---|---|---|
+| Tool calls per `/ask` answer | 15 | More tool calls are refused, and the agent answers with what it found |
+| Tool calls per task attempt | 40 | The same |
+| Model calls per agent run | 30 | The run ends with a message |
+| Tokens per `/ask` (agent, critic, summariser) | 250k | The agent stops before its next model call |
+| Tokens per `/plan` run | 1M | No new task starts. The interrupted task returns to `pending` without using a retry, the plan pauses with its progress saved, and the next `/plan` resumes it |
+
+The token defaults are about 3× (`/ask`) and 10× (`/plan`) the largest runs measured. While it was being built, the `/ask` budget caught a real bug. The summariser was set to start at 4,000 tokens, below what a few search results add up to. It ran after almost every step, replaced the user's question with a summary, and the agent repeated the same two searches until the budget stopped it at 252k tokens. With the threshold at 40,000, the same question takes 97k tokens.
+
+**Resilience.** Every model call has a timeout (`llm.timeout_seconds`) and retries with backoff on rate limits and server errors (`llm.max_retries`). When the main or judge model still fails, the call is retried on `llm.fallback_model`. Agents use `ModelFallbackMiddleware` for this, and the single-call judges use `with_fallbacks`.
 
 ### `/eval`: measuring quality
 
@@ -381,6 +430,7 @@ Everything RepoPilot stores goes in `.repopilot/` inside the repo being analysed
 | `symbols.db` | Symbol and call-graph index |
 | `memory/memory.db` | Conversation sessions (LangGraph checkpointer) |
 | `tasks.db` | `/plan` projects and tasks |
+| `worktrees/` | A plan's git worktree while it runs, removed when you apply, keep or discard |
 | `usage.db` | Tokens, cost and latency of every model call |
 | `evals/` | Saved `/eval` runs and your `/judge_check` labels |
 | `skills/` | Your own skills (`<name>/SKILL.md`), loaded on demand alongside the built-in ones |
@@ -394,6 +444,9 @@ The semantic cache lives in Redis. With Qdrant, vectors live in your Qdrant serv
 - **Structural questions use structure.** "What calls X?" is a lookup, not a similarity problem, so the symbol index answers it exactly, and vector search handles conceptual questions.
 - **A human approves every plan.** No code is written until you approve the plan, and that includes every command it will run to verify itself. A revised plan after a failure needs approval too.
 - **Evidence before opinion.** A task passes only when objective checks pass (files exist and parse, tests run green). The LLM judge then grades the real files. An agent's claim that "tests pass" counts for nothing.
+- **Nothing reaches your checkout unreviewed.** `/plan` works in a git worktree, and you see the whole diff before choosing to apply, keep or discard it. Applied changes are staged, not committed, so the commit is still yours.
+- **Answers are checked like tasks.** Code checks what code can (cited files and lines), the LLM judges only what it can't (whether claims are backed by the retrieved code), and a failure gets one revision that is told what was wrong.
+- **Every loop has a ceiling.** Step limits per agent and token budgets per command. Reaching one pauses or ends work cleanly instead of failing it, and a paused plan loses no progress.
 - **A failure leads to a new plan, not a dead end.** Retries learn from the failure reason. A task that keeps failing is re-planned around rather than blocking everything after it.
 - **Least privilege.** Each task type gets only the tools it needs, agents can't leave the project folder or read `.env`, unfamiliar commands need your approval, MCP is read-only, and there is no delete tool at all, so a bad task can't destroy existing work.
 - **The cache only answers when it's safe.** It is keyed on the question alone, so it is used only for the first question in a session, and it is cleared whenever the code changes.
@@ -497,7 +550,7 @@ All settings live in [`src/config/config.yaml`](src/config/config.yaml), documen
 
 | Section | Controls |
 |---|---|
-| `llm` | Provider (`gemini` / `openai` / `anthropic`), model, a cheaper `judge_model`, and retries for rate limits. To list the Gemini models your key can use, run `python -m repopilot.services.list_models` |
+| `llm` | Provider (`gemini` / `openai` / `anthropic`), model, a cheaper `judge_model`, retries, a timeout and a `fallback_model`. To list the Gemini models your key can use, run `python -m repopilot.services.list_models` |
 | `embeddings` | `fastembed` (local and free; runs Hugging Face models like BGE without PyTorch) or `openai`, and the model. Each model gets its own index, so switching is safe |
 | `vector_store`, `qdrant` | Chroma (local, the default) or Qdrant (a server or Qdrant Cloud, via `QDRANT_URL`) |
 | `rag` | `semantic` (vector search) or `hybrid` (vector + BM25 keyword search); works with either store |
@@ -505,7 +558,9 @@ All settings live in [`src/config/config.yaml`](src/config/config.yaml), documen
 | `symbols` | Turn the call-graph tools on or off |
 | `semantic_cache` | Redis URL, similarity threshold and TTL |
 | `memory` | When to summarise long conversations |
-| `tasks` | Time limit for verify commands, and how many times a failed task may be re-planned per run |
+| `tasks` | Time limit for verify commands, how many times a failed task may be re-planned per run, and worktree isolation (`worktree` / `none`) |
+| `ask` | Answer checks: on/off, whether the LLM grounding check runs, and how many revisions |
+| `budgets` | Tool-call and model-call limits per agent run, and token budgets per `/ask` and `/plan` |
 | `safety` | Keep agents inside the project, ask before unlisted commands (or refuse them), read-only MCP |
 | `usage.prices` | Price per 1M tokens (USD) for each model, used by `/stats` and `/eval` |
 
@@ -572,19 +627,23 @@ repopilot/
 │   ├── config/                  settings.py · config.yaml (all settings) · mcp_servers.json
 │   ├── agents/                  one file per LLM agent role
 │   │   ├── qa_agent.py            /ask: tool-using Q&A agent with memory
+│   │   ├── answer_critic.py       /ask: checks an answer's claims against the retrieved code
 │   │   ├── planner_agent.py       /plan: planner and re-planner
 │   │   ├── task_agent.py          /plan: builds one task with its type's toolset
 │   │   └── critic_agent.py        /plan: LLM judge for a finished task
 │   ├── workflows/               how agents are chained together
-│   │   ├── ask_workflow.py        cache → Q&A agent → sources
+│   │   ├── ask_workflow.py        cache → Q&A agent → answer checks → one revision
+│   │   ├── answer_verification.py citation checks → answer critic
 │   │   ├── plan_workflow.py       orchestrator loop: ready tasks, retries, re-planning
 │   │   ├── task_execution.py      task agent → objective checks → critic agent
 │   │   ├── verification.py        objective checks: files exist, parse, tests pass
 │   │   ├── approval.py            human-in-the-loop plan approval
+│   │   ├── worktree.py            /plan isolation: git worktree, diff review, apply/keep/discard
 │   │   ├── task_store.py          task state in SQLite (crash-safe)
 │   │   └── recovery.py · status.py
 │   ├── tools/                   agent-callable tools: code search, call graph, files, shell, sources
-│   ├── guardrails/              tool_safety.py: file scoping, command allowlist, read-only MCP
+│   ├── guardrails/              tool_safety.py: file scoping, command allowlist, read-only MCP ·
+│   │                            budgets.py: step limits and token budgets
 │   ├── retrieval/               code knowledge
 │   │   ├── indexing/              tree-sitter chunking, file watcher, one module per store
 │   │   ├── search/                vector / hybrid search per store, BM25, reranker
@@ -626,7 +685,7 @@ For example, the critic agent doesn't import the verification workflow; it recei
 poetry run pytest
 ```
 
-Tests mirror `src/` (`tests/agents/`, `tests/workflows/`, `tests/retrieval/`, …). They cover the task store and orchestration loop, re-planning, verification checks, the task and planner agents, tool safety, symbol extraction and call-graph queries, hybrid search, skills, usage tracking, eval metrics and the judge, reranking, source formatting and code chunking. A smoke test imports every module. No API keys are needed. The Qdrant tests run only when a Qdrant server is reachable (`docker run -p 6333:6333 qdrant/qdrant`) and are skipped otherwise.
+Tests mirror `src/` (`tests/agents/`, `tests/workflows/`, `tests/retrieval/`, …). They cover the task store and orchestration loop, re-planning, budget pauses, verification checks, worktree isolation (against a real temporary git repo), answer checks and the revision loop, the task and planner agents, tool safety and token budgets, symbol extraction and call-graph queries, hybrid search, skills, usage tracking, eval metrics and the judge, reranking, source formatting and code chunking. A smoke test imports every module. No API keys are needed. The Qdrant tests run only when a Qdrant server is reachable (`docker run -p 6333:6333 qdrant/qdrant`) and are skipped otherwise.
 
 ## Tech stack
 

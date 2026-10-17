@@ -1,7 +1,7 @@
 import os
 from langchain.tools import tool
 
-from repopilot.guardrails.tool_safety import check_path
+from repopilot.guardrails.tool_safety import check_path, resolve_path
 
 
 _MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -14,6 +14,7 @@ def read_file(file_path: str) -> str:
        return "Error: file path cannot be empty"
    if error := check_path(file_path):
        return error
+   file_path = str(resolve_path(file_path))
    if not os.path.exists(file_path):
        return f"Error: file not found: {file_path}"
    if not os.path.isfile(file_path):
@@ -39,6 +40,7 @@ def write_file(file_path: str, content: str) -> str:
        return "Error: file path cannot be empty"
    if error := check_path(file_path, write=True):
        return error
+   file_path = str(resolve_path(file_path))
    try:
        if os.path.dirname(file_path):
            os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -60,6 +62,7 @@ def append_file(file_path: str, content: str) -> str:
        return "Error: file path cannot be empty"
    if error := check_path(file_path, write=True):
        return error
+   file_path = str(resolve_path(file_path))
    if not os.path.exists(file_path):
        return f"Error: file not found: {file_path}"
    if not os.path.isfile(file_path):
@@ -85,6 +88,7 @@ def list_directory(directory: str) -> str:
        return "Error: directory cannot be empty"
    if error := check_path(directory):
        return error
+   directory = str(resolve_path(directory))
    if not os.path.exists(directory):
        return f"Error: directory not found: {directory}"
    if not os.path.isdir(directory):
