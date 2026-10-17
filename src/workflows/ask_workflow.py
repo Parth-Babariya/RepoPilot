@@ -1,6 +1,9 @@
+import re
 import time
 from dataclasses import dataclass, field
 
+from repopilot.agents.qa_agent import SEARCH_RESULTS_MARKER
+from repopilot.tools.code_search import search_codebase, search_memory
 from repopilot.tools.sources import Source, collect_sources
 from repopilot.config import config
 from repopilot.guardrails.budgets import budget_exhausted, token_budget
@@ -29,6 +32,38 @@ answer (the whole answer, not only the changes). State only what the code suppor
 something can't be confirmed from the code, say so."""
 
 
+_INITIAL_SEARCH = """{question}
+
+""" + SEARCH_RESULTS_MARKER + """; the results are below. Answer from
+them if they are enough, and search only for what is missing.]
+
+{results}"""
+
+# "explain that more", "why does it do this?" — about the previous answer, not new code
+_BACK_REFERENCE = re.compile(r"\b(that|this|it|those|these|above|previous|earlier)\b", re.IGNORECASE)
+
+
+def with_initial_search(question: str, has_history: bool = False) -> tuple[str, list[str]]:
+    """
+    The message to send the agent: the question plus the results of searching
+    for it, so the agent can often answer without spending a model call just to
+    decide to search (in /eval it found the right files 94% of the time; most
+    answers' first step was that search). Returns (message, [search results])
+    — the results also count as evidence for the answer checks.
+
+    Skipped for follow-ups about the previous answer, where a fresh search would
+    only add unrelated code, and when ask.initial_search is off.
+    """
+    if not (config.get("ask", {}) or {}).get("initial_search", True):
+        return question, []
+    if has_history and _BACK_REFERENCE.search(question) and len(question.split()) <= 12:
+        return question, []
+    results = search_codebase.invoke({"query": question})
+    if results.startswith("No relevant code"):
+        return question, []
+    return _INITIAL_SEARCH.format(question=question, results=results), [results]
+
+
 def _content(message) -> str:
     # Claude returns content as a list of blocks; OpenAI returns a plain string.
     content = getattr(message, "content", "")
@@ -45,18 +80,19 @@ def _tool_outputs(messages) -> list[str]:
     return [_content(m) for m in messages if getattr(m, "type", "") == "tool"]
 
 
-async def _ask(agent, text: str, agent_config: dict) -> tuple[str, list[str]]:
+async def _ask(agent, text: str, agent_config: dict, found: list[str] | None = None) -> tuple[str, list[str]]:
     """
-    Send one message to the agent. Returns its answer and the tool outputs of
-    this turn — the code it retrieved. A follow-up that used no tools ("explain
-    that more") is backed by the code retrieved earlier in the session instead.
+    Send one message to the agent. Returns its answer and the code behind it:
+    `found` (the initial search) plus this turn's tool outputs. A follow-up that
+    retrieved nothing ("explain that more") is backed by the code retrieved
+    earlier in the session instead.
     """
     response = await agent.ainvoke({"messages": [{"role": "user", "content": text}]}, agent_config)
     messages = response["messages"]
     start = next((i for i in range(len(messages) - 1, -1, -1)
                   if getattr(messages[i], "type", "") == "human" and _content(messages[i]) == text), -1)
-    evidence = _tool_outputs(messages[start + 1:]) or _tool_outputs(messages)[-10:]
-    return _content(messages[-1]), evidence
+    evidence = (found or []) + _tool_outputs(messages[start + 1:])
+    return _content(messages[-1]), evidence or _tool_outputs(messages)[-10:]
 
 
 async def _has_history(agent, agent_config: dict) -> bool:
@@ -100,8 +136,9 @@ async def handle_query(
     model = config["llm"]["model"]
     agent_config = {"configurable": {"thread_id": thread_id}}
 
+    has_history = await _has_history(agent, agent_config)
     use_cache = semantic_cache is not None and cache_domain is not None
-    if use_cache and await _has_history(agent, agent_config):
+    if use_cache and has_history:
         logger.info("Session has prior messages - skipping semantic cache")
         use_cache = False
 
@@ -120,8 +157,9 @@ async def handle_query(
     # ask.max_revisions rewrites. Every LLM call here counts against budgets.ask_tokens.
     revised = False
     try:
-        with token_budget("ask_tokens"), collect_sources() as sources:
-            answer, evidence = await _ask(agent, question, agent_config)
+        with token_budget("ask_tokens"), collect_sources() as sources, search_memory():
+            message, found = with_initial_search(question, has_history)
+            answer, evidence = await _ask(agent, message, agent_config, found)
             check = None if budget_exhausted() else await verify_answer(question, answer, sources, evidence)
             for _ in range(max_revisions()):
                 if check is None or check.passed or budget_exhausted():

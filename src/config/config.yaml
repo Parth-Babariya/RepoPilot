@@ -32,6 +32,10 @@ tasks:
  isolation: worktree
 
 ask:
+ # Search the code for the question before the agent starts and include the results, so
+ # the agent often answers without a model call spent deciding to search. Skipped for
+ # follow-ups about the previous answer ("explain that more").
+ initial_search: true
  # Each /ask answer is checked before you see it: cited files and line numbers must exist
  # (code, free), then the judge model checks the answer's claims against the code the agent
  # retrieved (one cheap LLM call). An answer that fails gets one revision.
@@ -110,10 +114,11 @@ chromadb:
 rag:
  # semantic = vector search · hybrid = vector + BM25 keyword search merged by rank
  # (works with Chroma and Qdrant). Measured with scripts/benchmark_retrieval.py
- # (bge-small, hit@5 / MRR): semantic 88% / 0.64 · + rerank 75% / 0.61 ·
- # hybrid 79% / 0.62 · hybrid + rerank 79% / 0.60. Plain semantic search wins on this
- # question set, so it is the default — rerun the script on your own repo to compare.
- mode: semantic           # semantic | hybrid
+ # (bge-small, hit@5 / MRR): semantic 92% / 0.68 · + rerank 88% / 0.69 ·
+ # hybrid 92% / 0.75 · hybrid + rerank 92% / 0.67. Hybrid became the best once module-level
+ # code (constants, config tables) was indexed — keyword search finds exact names such as
+ # _ALWAYS_DENIED that the agent searches for. Rerun the script on your own repo to compare.
+ mode: hybrid             # semantic | hybrid
 
 vector_store:
  # chroma: local, stored in the repo's .repopilot/ (default) · qdrant: a server or Qdrant Cloud
@@ -121,10 +126,10 @@ vector_store:
  provider: chroma         # chroma | qdrant
 
 rerank:
- # Off by default: on data/evals/questions.yaml it lowered both hit@5 (88% → 75%) and MRR
- # (0.64 → 0.61), because the cross-encoder favours text that *reads* like the question —
- # test names, README prose — over the code that implements the answer. It also costs
- # ~1.7s per search on a laptop CPU. It may suit repos with less prose; measure first.
+ # Off by default: on data/evals/questions.yaml it adds nothing to hybrid search (hit@5 92%
+ # either way, MRR 0.75 → 0.67), because the cross-encoder favours text that *reads* like the
+ # question — test names, README prose — over the code that implements the answer. It also
+ # costs ~1.7s per search on a laptop CPU. It may suit repos with less prose; measure first.
  enabled: false           # vector search fetches `candidates` chunks, a local cross-encoder keeps the best k
  # jina-v1-tiny beat ms-marco-MiniLM-L-6 and jina-v1-turbo in a reranker comparison, and was fastest
  model: jinaai/jina-reranker-v1-tiny-en

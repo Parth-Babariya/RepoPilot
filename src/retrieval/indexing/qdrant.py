@@ -8,7 +8,7 @@ from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient, models
 
 from repopilot.config import config
-from repopilot.retrieval.indexing.code_parser import parse_file, get_source_files
+from repopilot.retrieval.indexing.code_parser import CHUNKER_VERSION, parse_file, get_source_files
 from repopilot.services.llm_service import embedding_slug, get_embedder
 from repopilot.observability.logger import get_logger
 
@@ -90,7 +90,10 @@ def _source_filter(filepath: str) -> models.Filter:
 
 
 def _get_indexed_mtimes(client: QdrantClient, name: str) -> dict[str, float]:
-    """Scroll every point's metadata and return {filepath: mtime}."""
+    """
+    Scroll every point's metadata and return {filepath: mtime}. Points made by an
+    older chunker count as mtime 0, so their file is re-chunked.
+    """
     mtimes: dict[str, float] = {}
     offset = None
     while True:
@@ -100,9 +103,9 @@ def _get_indexed_mtimes(client: QdrantClient, name: str) -> dict[str, float]:
         for point in points:
             meta   = (point.payload or {}).get("metadata", {})
             source = meta.get("source", "")
-            mtime  = meta.get("mtime", 0.0)
-            if source and mtime >= mtimes.get(source, 0.0):
-                mtimes[source] = mtime
+            mtime  = meta.get("mtime", 0.0) if meta.get("chunker") == CHUNKER_VERSION else 0.0
+            if source:
+                mtimes[source] = min(mtime, mtimes.get(source, mtime))
         if offset is None:
             return mtimes
 
@@ -128,6 +131,7 @@ def _file_documents(filepath: str, mtime: float) -> list[Document]:
                 "start_line": chunk.start_line,
                 "end_line":   chunk.end_line,
                 "mtime":      mtime,
+                "chunker":    CHUNKER_VERSION,
             },
         )
         for chunk in chunks

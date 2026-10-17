@@ -72,7 +72,9 @@ async def get_mcp_tools() -> list:
           continue
       kept = [t for t in server_tools if not read_only or is_read_only_mcp_tool(t.name)]
       dropped = sorted(t.name for t in server_tools if t not in kept)
-      tools.extend(_guard_secrets(t) for t in kept)
+      # Tagged with their server, so an agent can offer a server's tools only when relevant
+      tools.extend(_guard_secrets(t).model_copy(update={"metadata": {**(t.metadata or {}), "mcp_server": name}})
+                   for t in kept)
       logger.info(f"Loaded {len(kept)} tools from MCP server '{name}'"
                   + (f" (read-only; skipped {dropped})" if dropped else ""))
   return tools

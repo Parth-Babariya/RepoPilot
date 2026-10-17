@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -53,10 +54,20 @@ BLOCK_NODE_TYPES = {
   "func_declaration", # Go
 }
 
+# Bumped whenever chunking changes. Indexers store it with every chunk and
+# re-chunk files indexed by an older version, so an existing index upgrades itself.
+#   2: module-level code (constants, config tables, header comments) is indexed too
+CHUNKER_VERSION = 2
+
+_MODULE_CHUNK_LINES = 60
+_IMPORT = re.compile(r"^\s*(import |from \S+ import |#include |using |package |require\()")
+_ASSIGNED = re.compile(r"^(?:export\s+)?(?:const\s+|let\s+|var\s+)?([A-Za-z_]\w*)\s*(?::[^=\n]+)?=")
+
+
 @dataclass
 class ParsedChunk:
   name: str
-  type: str        # "function" | "class" | "block"
+  type: str        # "function" | "class" | "module" | "block"
   content: str
   source: str      # absolute path to the file
   start_line: int
@@ -106,8 +117,58 @@ def _parse_with_treesitter(source: str, filepath: str, language_name: str) -> li
       logger.warning(f"No AST blocks found in {filepath}, falling back to sliding window")
       return _sliding_window(lines, filepath)
 
-
+  chunks += _module_chunks(lines, chunks, filepath)
+  chunks.sort(key=lambda c: c.start_line)
   logger.info(f"Parsed {len(chunks)} chunks from {filepath}")
+  return chunks
+
+
+def _module_chunks(lines: list[str], blocks: list[ParsedChunk], filepath: str) -> list[ParsedChunk]:
+  """
+  Chunks for the code between functions and classes: constants, config tables,
+  header comments. Without them a question about e.g. which commands are always
+  refused could never retrieve _ALWAYS_DENIED, and the agent repeated the same
+  search up to 12 times in /eval. Runs of import lines, decorators and blank
+  lines alone are skipped.
+  """
+  covered = set()
+  for block in blocks:
+      covered.update(range(block.start_line, block.end_line + 1))
+
+  segments, current = [], []
+  for number, text in enumerate(lines, 1):
+      if number in covered:
+          if current:
+              segments.append(current)
+          current = []
+      else:
+          current.append((number, text))
+  if current:
+      segments.append(current)
+
+  chunks = []
+  for segment in segments:
+      for i in range(0, len(segment), _MODULE_CHUNK_LINES):
+          part = segment[i:i + _MODULE_CHUNK_LINES]
+          while part and not part[0][1].strip():
+              part = part[1:]
+          while part and not part[-1][1].strip():
+              part = part[:-1]
+          meaningful = [t for _, t in part
+                        if t.strip() and not _IMPORT.match(t) and not t.lstrip().startswith("@")]
+          code = [t for t in meaningful if not t.lstrip().startswith(("#", "//", "*", "/*"))]
+          prose = [t for t in meaningful if t not in code and re.search(r"[A-Za-z]{3}", t)]
+          if not code and len(prose) < 3:
+              continue   # nothing but a section divider like "# --- Files ---"
+          names = [m.group(1) for t in meaningful if (m := _ASSIGNED.match(t))]
+          chunks.append(ParsedChunk(
+              name=", ".join(dict.fromkeys(names[:3])) or "module code",
+              type="module",
+              content="\n".join(t for _, t in part),
+              source=filepath,
+              start_line=part[0][0],
+              end_line=part[-1][0],
+          ))
   return chunks
 
 

@@ -2,7 +2,7 @@ import os
 import chromadb
 
 from repopilot.config import config
-from repopilot.retrieval.indexing.code_parser import parse_file, get_source_files
+from repopilot.retrieval.indexing.code_parser import CHUNKER_VERSION, parse_file, get_source_files
 from repopilot.services.llm_service import embedding_slug, get_embedder
 from repopilot.observability.logger import get_logger
 
@@ -45,17 +45,17 @@ def _get_indexed_mtimes(collection: chromadb.Collection) -> dict[str, float]:
     """
     Read all chunk metadata from ChromaDB and return {filepath: mtime}.
 
-    A file has many chunks — we take the highest mtime seen across all of
-    them (they should all be equal, but max() is safe if they ever drift).
+    A file has many chunks — we take the lowest mtime seen across all of them
+    (they should all be equal; min() re-indexes the file if they ever drift).
+    Chunks made by an older chunker count as mtime 0, so the file is re-chunked.
     """
     results = collection.get(include=["metadatas"])
     mtimes: dict[str, float] = {}
     for meta in results["metadatas"]:
         source = meta.get("source", "")
-        mtime  = meta.get("mtime", 0.0)
-        # Keep the highest mtime seen for each source file
-        if source and mtime > mtimes.get(source, 0.0):
-            mtimes[source] = mtime
+        mtime  = meta.get("mtime", 0.0) if meta.get("chunker") == CHUNKER_VERSION else 0.0
+        if source:
+            mtimes[source] = min(mtime, mtimes.get(source, mtime))
     return mtimes
 
 
@@ -113,6 +113,7 @@ def _embed_file(collection: chromadb.Collection, filepath: str, mtime: float) ->
             "start_line": chunk.start_line,
             "end_line":   chunk.end_line,
             "mtime":      mtime,   # stored so next run can skip this file if unchanged
+            "chunker":    CHUNKER_VERSION,
         } for chunk in chunks]
     )
     return len(chunks)

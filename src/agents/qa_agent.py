@@ -1,4 +1,8 @@
+import re
+
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import HumanMessage
 
 from repopilot.guardrails.budgets import agent_limits
 from repopilot.services.llm_service import fallback_middleware, get_llm
@@ -14,7 +18,9 @@ from repopilot.memory.conversation import get_summarization_middleware
 logger = get_logger(__name__)
 
 SYSTEM_PROMPT = """You are a senior software engineer with deep knowledge of the codebase.
-Always use the search_codebase tool before answering any question.
+Base every answer on code you have seen. The question may already include search results;
+if they are not enough, search further with your tools before answering.
+To search for several things, request all the searches in one step — they run in parallel.
 Reference specific file names, function names and line numbers in your answers.
 If you cannot find the answer in the codebase, say so explicitly."""
 
@@ -24,6 +30,44 @@ SYMBOL_TOOLS_PROMPT = """Choosing a search tool:
 - find_callers: "what calls X?", "where is X used?", "what happens before X?".
 - find_callees: "what does X do step by step?", "what happens when X runs?".
 Exact-name tools are precise; combine them with search_codebase when a question needs both."""
+
+# Separates the user's question from search results added to the same message
+# (workflows/ask_workflow.with_initial_search); only the question decides tools.
+SEARCH_RESULTS_MARKER = "[RepoPilot already searched the code for this question"
+
+# Questions that need the GitHub MCP tools (issues, PRs, commits on GitHub)
+_GITHUB_TOPIC = re.compile(r"github|\bissues?\b|pull request|\bPRs?\b|\bcommits?\b|\breleases?\b|\bbranch",
+                           re.IGNORECASE)
+
+
+class GitHubToolsOnDemand(AgentMiddleware):
+    """
+    Shows the model the GitHub MCP tools only when the question is about GitHub.
+    Every tool's description is sent with every model call: the GitHub server's
+    read-only tools are most of the Q&A agent's tool list, yet questions about the
+    code never need them. Hiding them makes each call smaller and faster, and also
+    keeps the agent from guessing at GitHub lookups that fail with "Not Found".
+    The decision is a keyword rule, not an LLM call — an extra model call to save
+    model calls would defeat the purpose.
+    """
+
+    def __init__(self, tool_names: set[str]) -> None:
+        super().__init__()
+        self.tool_names = tool_names
+
+    def _visible(self, request):
+        message = next((m.content for m in reversed(request.messages) if isinstance(m, HumanMessage)), "")
+        question = str(message).split(SEARCH_RESULTS_MARKER)[0]
+        if _GITHUB_TOPIC.search(question):
+            return request
+        return request.override(tools=[t for t in request.tools if getattr(t, "name", None) not in self.tool_names])
+
+    def wrap_model_call(self, request, handler):
+        return handler(self._visible(request))
+
+    async def awrap_model_call(self, request, handler):
+        return await handler(self._visible(request))
+
 
 async def build_agent(checkpointer):
    """Create and return a LangChain agent with persistent memory."""
@@ -54,5 +98,7 @@ async def build_agent(checkpointer):
        # memory.summarize_at_tokens so long sessions don't overflow the context window.
        # Then: a step limit and the /ask token budget, so a looping agent stops
        # cleanly, and llm.fallback_model if the main model keeps failing.
-       middleware=[get_summarization_middleware(), *agent_limits("qa_tool_calls"), *fallback_middleware()],
+       middleware=[get_summarization_middleware(), *agent_limits("qa_tool_calls"), *fallback_middleware(),
+                   GitHubToolsOnDemand({t.name for t in mcp_tools
+                                        if (t.metadata or {}).get("mcp_server") == "github"})],
    )

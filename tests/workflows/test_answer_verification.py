@@ -15,6 +15,7 @@ from repopilot.workflows.ask_workflow import handle_query
 def project(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(usage, "_store", UsageStore(str(tmp_path / "usage.db")))
+    monkeypatch.setitem(av.config, "ask", {"initial_search": False})   # tested in test_ask_workflow.py
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "orders.py").write_text("def place_order():\n    pass\n\n\ndef cancel_order():\n    pass\n")
     return tmp_path
@@ -42,6 +43,14 @@ def test_missing_files_and_lines_past_the_end_are_problems():
     report = check_citations("See `src/payments.py` and `src/orders.py:40-45`.", [], evidence=[])
     assert any("payments.py" in p and "no such file" in p for p in report.problems)
     assert any("orders.py" in p and "only 6 lines" in p for p in report.problems)
+
+
+def test_a_bare_file_name_can_be_a_plain_mention():
+    # A real answer said "the repository does not contain a package.json file" — true,
+    # and it must not fail the check. A path or line numbers still make it a citation.
+    report = check_citations("This repo has no `package.json`, so `npm test` has nothing to run.", [], [])
+    assert report.problems == []
+    assert check_citations("See `package.json:3`.", [], []).problems
 
 
 def test_code_names_missing_from_the_retrieved_code_are_reported():

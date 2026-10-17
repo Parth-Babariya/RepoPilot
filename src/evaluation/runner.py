@@ -14,6 +14,8 @@ from repopilot.config import config
 from repopilot.retrieval.search.factory import get_retriever
 from repopilot.retrieval.search.reranker import rerank_config
 from repopilot.retrieval.symbol_index import symbols_enabled
+from repopilot.tools.code_search import search_memory
+from repopilot.workflows.ask_workflow import with_initial_search
 from repopilot.evaluation.judge import judge_answer
 from repopilot.evaluation.metrics import (
     EvalQuestion, context_recall, fact_recall, load_questions, mean, reciprocal_rank, retrieval_rank,
@@ -63,17 +65,20 @@ async def _evaluate_one(agent, question: EvalQuestion, run_id: str, top_k: int) 
             result["hit"] = rank is not None
             result["reciprocal_rank"] = reciprocal_rank(rank)
 
-        # 2. Full agent answer on a fresh thread (no history, no cache)
-        started  = time.perf_counter()
-        response = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": question.question}]},
-            {"configurable": {"thread_id": session}},
-        )
+        # 2. Full agent answer on a fresh thread (no history, no cache), prepared
+        #    the way /ask does it: initial search, repeated searches caught
+        started = time.perf_counter()
+        with search_memory():
+            message, found = with_initial_search(question.question)
+            response = await agent.ainvoke(
+                {"messages": [{"role": "user", "content": message}]},
+                {"configurable": {"thread_id": session}},
+            )
         result["latency_s"] = round(time.perf_counter() - started, 2)
 
         messages     = response["messages"]
         answer       = _content(messages[-1])
-        tool_outputs = [_content(m) for m in messages if getattr(m, "type", "") == "tool"]
+        tool_outputs = found + [_content(m) for m in messages if getattr(m, "type", "") == "tool"]
         result["answer"]     = answer
         result["tools_used"] = [tc["name"] for m in messages for tc in (getattr(m, "tool_calls", None) or [])]
 

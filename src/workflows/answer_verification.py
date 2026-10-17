@@ -104,7 +104,10 @@ def check_citations(answer: str, sources: list[Source], evidence: list[str]) -> 
                                     if Path(s.path).as_posix().endswith(cited)][:1]
         candidates = candidates or repo_files.matching(cited)
         if not candidates:
-            report.problems.append(f"`{cited}` is cited but no such file exists in the project")
+            # Only a real citation — a path or line numbers — must exist. A bare name can be
+            # a plain mention: "this repo has no package.json" is true and must not fail.
+            if "/" in cited or start:
+                report.problems.append(f"`{cited}` is cited but no such file exists in the project")
             continue
         cited_files += candidates
 

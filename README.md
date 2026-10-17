@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-137%20passing-brightgreen)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [Configuration](#configuration) · [Evaluation](#evaluation) · [Project structure](#project-structure)
@@ -41,7 +41,7 @@ Sources:
 |---|---|
 | **Code Q&A with RAG** | tree-sitter splits code into functions and classes (Python, JS/TS, Java, Go, Rust, C/C++, C# and more). The chunks are embedded and searched before every answer. Answers render as Markdown and list their sources. |
 | **Runs for free** | The default setup uses Gemini's free tier for the LLM, and local embeddings and reranking (fastembed/ONNX). It costs $0, and indexing needs no API key. Groq (also free, and much faster) is built in too, and works well as the judge model next to Gemini (`judge_model: groq:openai/gpt-oss-20b`), which spreads calls over two free quotas. Switching to OpenAI or Anthropic is one config line. |
-| **Measured retrieval** | Local vector search by default. Hybrid mode (adds BM25 keyword search, merged by reciprocal rank fusion) and a cross-encoder reranker are optional. Each setting was benchmarked, and the defaults follow the numbers ([`scripts/benchmark_retrieval.py`](scripts/benchmark_retrieval.py)). |
+| **Measured retrieval** | Hybrid search by default: local vector search plus BM25 keyword search, merged by reciprocal rank fusion. Plain vector search and a cross-encoder reranker are options. Each setting was benchmarked, and the defaults follow the numbers ([`scripts/benchmark_retrieval.py`](scripts/benchmark_retrieval.py)). |
 | **Call-graph search** | A symbol index records every function, method, class and call site. The agent can answer *"what calls `fail_task`?"* exactly, not by similarity. |
 | **Multi-agent planning** | `/plan <goal>`: a planner LLM builds a dependency graph of tasks, and you approve it or ask for changes. Each task runs with only the tools its type needs. |
 | **Verified by execution** | After each task the system checks its files exist and parse, then runs the task's tests (a `verify_command` you approved with the plan). Only then does an LLM judge grade the actual files. An agent can't pass by just *saying* the tests pass. |
@@ -226,7 +226,9 @@ sequenceDiagram
         C-->>R: stored answer
         R-->>U: answer (no LLM or tool calls)
     else cache miss
-        R->>A: question + session id
+        R->>T: search for the question, once, before the agent
+        T-->>R: code chunks
+        R->>A: question + those results + session id
         loop until the model stops calling tools
             A->>L: conversation + tool schemas
             L-->>A: tool call
@@ -246,10 +248,15 @@ sequenceDiagram
     end
 ```
 
+**Fewer model calls per answer.** The `/eval` runs showed that slow answers weren't caused by slow model calls (a typical call took 1.5 s) but by too many of them. One answer made 21 tool calls, searching for `_READ_ONLY_PROGRAMS` 12 times. Three changes, each aimed at a cause:
+- **The question arrives with its search results.** The workflow searches once before the agent starts. Most answers began with exactly that search, so the agent can often answer without spending a model call to decide to search. Follow-ups about the last answer ("explain that more") skip it.
+- **A repeated search gets a reminder, not the same results.** Within one answer, a query with the same words as an earlier one is answered with "you already searched this — try other words, `find_symbol`, or answer". This replaces a lower step limit: the data showed a 17-call answer scoring a perfect 1.0, so a lower cap would have cut good answers short.
+- **GitHub tools appear only for GitHub questions.** Every tool's description is sent with every model call. The 14 read-only GitHub tools were about 2,000 of the 4,600 tokens each call started with, yet code questions never need them. A keyword rule shows them only when the question mentions issues, PRs, commits and so on. It's a rule rather than an LLM call, because an extra model call to save model calls would defeat the purpose.
+
 The agent chooses its tools itself. Questions about behaviour ("how does caching work?") go to `search_codebase`. Exact structural questions ("what calls `fail_task`?") go to the call-graph tools, which read the symbol index directly instead of guessing by similarity.
 
 **Answers are checked before you see them**, in the same order as `/plan` tasks: code first, then an LLM only for what code can't check ([`answer_verification.py`](src/workflows/answer_verification.py)).
-1. **Citations (code).** Every file the answer cites (`src/x.py:40-52`, `x.py (lines 40-52)`, …) must exist, and every cited line must be inside it. A wrong citation fails the answer without spending a model call.
+1. **Citations (code).** Every file the answer cites (`src/x.py:40-52`, `x.py (lines 40-52)`, …) must exist, and every cited line must be inside it. A wrong citation fails the answer without spending a model call. A bare file name without a path or line numbers counts as a mention rather than a citation, because "this repo has no `package.json`" can be true.
 2. **Grounding (answer critic).** The judge model reads the answer next to the code the agent retrieved for it, and lists claims about the code that nothing retrieved supports. Names the answer formats as code but that appear nowhere in that code are passed to it as hints.
 
 A failing answer goes back to the agent once, with the problems listed, and it may search again before rewriting. The check result is printed under the answer (`✓ Checked: …` or `⚠ Not verified — …`), and an answer that still fails is never cached. Turn it off, or keep only the free citation checks, under `ask:` in the config.
@@ -268,9 +275,9 @@ flowchart LR
     k --> a["Agent"]
 ```
 
-The default is plain vector search: the query is embedded locally and compared with the stored chunk embeddings, which takes milliseconds. Two additions are built in and can be switched on in config. Both were measured on the eval set before deciding the defaults ([numbers](#retrieval-benchmark-measured)):
+The default is hybrid search: the query is embedded locally and compared with the stored chunk embeddings, and BM25 keyword search runs alongside it. Both take milliseconds. Every setting was measured on the eval set before choosing the defaults ([numbers](#retrieval-benchmark-measured)):
 
-- **Hybrid mode** (`rag.mode: hybrid`) adds BM25 keyword search, which matches exact identifiers such as `fail_task` (split into `fail` and `task` too). The two result lists are merged with reciprocal rank fusion, which needs only ranks, so vector distances and BM25 scores never have to be put on the same scale. It works with both stores, and one index serves both modes, so switching never needs a re-index. With Chroma, the keyword index is built in memory from the stored chunks. With Qdrant, every point stores a sparse BM25 vector next to its dense one.
+- **Hybrid mode** (`rag.mode: hybrid`, the default; `semantic` is vector search only) adds BM25 keyword search, which matches exact identifiers such as `fail_task` (split into `fail` and `task` too). The two result lists are merged with reciprocal rank fusion, which needs only ranks, so vector distances and BM25 scores never have to be put on the same scale. It works with both stores, and one index serves both modes, so switching never needs a re-index. With Chroma, the keyword index is built in memory from the stored chunks. With Qdrant, every point stores a sparse BM25 vector next to its dense one.
 - **Reranking** (`rerank.enabled`) fetches 20 candidates and has a local cross-encoder, which reads the query and each chunk together, keep the best 5. On this project it made results worse: it favours text that reads like the question, such as test names and README prose, over the code that answers it. It also adds about 1.7 s per search. It may help on repos with less prose.
 
 ### Indexing pipeline
@@ -282,7 +289,7 @@ flowchart LR
     filt["Source files only<br/>skip .venv, node_modules,<br/>lock files, .env, files over 500 KB"] --> chg{"Changed since<br/>last index?"}
     chg -- no --> skip["Skip, no re-embedding"]
     chg -- yes --> parse["tree-sitter parse"]
-    parse --> chunks["Chunks<br/>functions · classes<br/>sliding-window fallback"]
+    parse --> chunks["Chunks<br/>functions · classes ·<br/>module-level code"]
     parse --> syms["Symbols + call sites"]
     chunks --> emb["Embed in batches<br/>fastembed"] --> vs[("Chroma / Qdrant<br/>one collection per<br/>embedding model")]
     syms --> sg[("Symbol graph<br/>SQLite")]
@@ -450,7 +457,7 @@ The semantic cache lives in Redis. With Qdrant, vectors live in your Qdrant serv
 - **A failure leads to a new plan, not a dead end.** Retries learn from the failure reason. A task that keeps failing is re-planned around rather than blocking everything after it.
 - **Least privilege.** Each task type gets only the tools it needs, agents can't leave the project folder or read `.env`, unfamiliar commands need your approval, MCP is read-only, and there is no delete tool at all, so a bad task can't destroy existing work.
 - **The cache only answers when it's safe.** It is keyed on the question alone, so it is used only for the first question in a session, and it is cleared whenever the code changes.
-- **Changes are measured, not assumed.** Retrieval changes are judged on the eval set, and the results decide the defaults. Hybrid search was built and measured, didn't help on this project, and so is off by default. The LLM judge itself can be checked against human labels with `/judge_check`.
+- **Changes are measured, not assumed.** Retrieval changes are judged on the eval set, and the results decide the defaults. Hybrid search was built, measured, and at first lost to vector search, so it was off. Once module-level code was indexed it measured best, so it became the default. The reranker never helped, so it stays off. The LLM judge itself can be checked against human labels with `/judge_check`.
 
 ## Commands
 
@@ -553,13 +560,13 @@ All settings live in [`src/config/config.yaml`](src/config/config.yaml), documen
 | `llm` | Provider (`gemini` / `groq` / `openai` / `anthropic`), model, a cheaper `judge_model`, retries, a timeout and a `fallback_model` (which can use another provider: `gemini:gemini-3.5-flash`). To list the Gemini models your key can use, run `python -m repopilot.services.list_models` |
 | `embeddings` | `fastembed` (local and free; runs Hugging Face models like BGE without PyTorch) or `openai`, and the model. Each model gets its own index, so switching is safe |
 | `vector_store`, `qdrant` | Chroma (local, the default) or Qdrant (a server or Qdrant Cloud, via `QDRANT_URL`) |
-| `rag` | `semantic` (vector search) or `hybrid` (vector + BM25 keyword search); works with either store |
+| `rag` | `hybrid` (vector + BM25 keyword search, the default) or `semantic` (vector search only); works with either store |
 | `rerank` | Optional cross-encoder reranking (off by default, see the benchmark), the model and candidate count |
 | `symbols` | Turn the call-graph tools on or off |
 | `semantic_cache` | Redis URL, similarity threshold and TTL |
 | `memory` | When to summarise long conversations |
 | `tasks` | Time limit for verify commands, how many times a failed task may be re-planned per run, and worktree isolation (`worktree` / `none`) |
-| `ask` | Answer checks: on/off, whether the LLM grounding check runs, and how many revisions |
+| `ask` | The initial search before the agent starts, answer checks on or off, whether the LLM grounding check runs, and how many revisions |
 | `budgets` | Tool-call and model-call limits per agent run, and token budgets per `/ask` and `/plan` |
 | `safety` | Keep agents inside the project, ask before unlisted commands (or refuse them), read-only MCP |
 | `usage.prices` | Price per 1M tokens (USD) for each model, used by `/stats` and `/eval` |
@@ -597,16 +604,19 @@ Search quality on the 24 questions, retrieving from RepoPilot's own code with `b
 
 | Search | hit@5 | MRR | Time / query (laptop CPU) |
 |---|---|---|---|
-| **Vector only (default)** | **88%** | **0.64** | 0.03 s |
-| Vector + reranker | 75% | 0.61 | 1.7 s |
-| Hybrid (vector + BM25) | 79% | 0.62 | 0.03 s |
-| Hybrid + reranker | 79% | 0.60 | 1.6 s |
+| Search | hit@5 before → now | MRR before → now | Time / query (laptop CPU) |
+|---|---|---|---|
+| Vector only | 88% → 92% | 0.64 → 0.68 | 0.03 s |
+| Vector + reranker | 75% → 88% | 0.61 → 0.69 | 1.8 s |
+| **Hybrid (vector + BM25), the default** | 79% → **92%** | 0.62 → **0.75** | 0.05 s |
+| Hybrid + reranker | 79% → 92% | 0.60 → 0.67 | 1.6 s |
 
-Neither addition beat plain vector search here, so both are off by default:
-- **Hybrid.** On the questions it missed, the identifiers in the question (`fail_task`, `claim_task`, …) appear far more often in the test files than in the file that answers it, so keyword search fills the top 5 with tests. For "where is X used?" it finds where X is *defined*. The call-graph tools answer exact-name questions like these precisely instead.
-- **Reranker.** The cross-encoder scores how much a chunk *reads like* the question. Test names and README paragraphs read that way, so they took 32 of the 120 top-5 slots and pushed out the code that answers the question.
+**What changed between the two columns:** module-level code is now indexed. The index used to hold only functions and classes, so constants and config tables such as `_ALWAYS_DENIED`, `_READ_ONLY_PROGRAMS` and `TOOLS_BY_TYPE`, and the header comments explaining them, could never be found. This was also the cause of the 12 repeated searches in `/eval`. Every mode improved, and hybrid improved most, because keyword search is built for exact names. It went from worst to best, so it is now the default. Existing indexes upgrade themselves: chunks record the chunker version, and files indexed by an older version are re-chunked on the next start.
 
-With 24 questions, one question is about 4 points, so small gaps are noise, but the reranker's drop is three questions. The numbers also move as the code changes, which is why the script is in the repo. `bge-small` is the default embedding model because, in an earlier comparison, it matched `bge-base`'s accuracy and indexed about 3× faster.
+- **Hybrid** is the default now. Before module-level code was indexed, its keyword matches went mostly to test files that repeat a function's name, and it lost to vector search.
+- **Reranker** stays off. It adds nothing on top of hybrid search (MRR 0.75 → 0.67) and costs about 1.7 s per search. The cross-encoder scores how much a chunk *reads like* the question, and test names and README paragraphs read that way.
+
+With 24 questions, one question is about 4 points, so small gaps are noise. The numbers also move as the code changes, which is why the script is in the repo. `bge-small` is the default embedding model because, in an earlier comparison, it matched `bge-base`'s accuracy and indexed about 3× faster.
 
 ### Full `/eval` results
 
