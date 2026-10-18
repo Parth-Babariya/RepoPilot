@@ -57,3 +57,7 @@ jobs:
       - uses: actions/checkout@v5
       - run: docker build -t repopilot .
       - run: docker run --rm --entrypoint python repopilot -c "import repopilot.main"
+      # git must work in a repo owned by another user (the mounted host repo), or /plan loses its worktree
+      - run: |
+          sudo chown -R 12345:12345 .
+          docker run --rm -v "$PWD:/workspace" --entrypoint git repopilot rev-parse --show-toplevel

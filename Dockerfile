@@ -7,6 +7,11 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends nodejs npm git \
  && rm -rf /var/lib/apt/lists/*
 
+# The mounted repo is owned by the host user, not the container's root, and git refuses
+# to work in it ("dubious ownership"). /plan would then find no repo and skip its worktree,
+# writing straight into your checkout. The container only sees the repo you mount.
+RUN git config --system --add safe.directory '*'
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
