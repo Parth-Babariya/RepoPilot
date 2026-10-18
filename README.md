@@ -277,7 +277,7 @@ All settings live in [`src/config/config.yaml`](src/config/config.yaml), documen
 ## Project structure
 
 ```
-repopilot/
+RepoPilot/
 ├── src/                         all source code, installed as the `repopilot` package
 │   ├── main.py                  CLI entry point: REPL and command routing
 │   ├── config/                  settings.py · config.yaml (all settings) · mcp_servers.json
