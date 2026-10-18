@@ -70,7 +70,7 @@ llm:
  # Free-tier daily caps differ per model: gemini-3.5-flash allows only 20 requests/day
  # (too few for /plan or /eval), so the default is flash-lite. Use flash for one-off /ask.
  model: gemini-3.5-flash-lite
- judge_model: gemini-3.5-flash-lite   # cheaper/faster model used only for LLM-as-judge
+ judge_model: groq:openai/gpt-oss-20b  # LLM-as-judge and answer checks; Groq keeps them off Gemini's quota
  max_retries: 6                       # back off and retry on rate limits (free tiers allow few requests/minute)
  timeout_seconds: 120                 # a request that hangs longer fails (and is retried) instead of freezing the run
  # Used when the main (or judge) model still fails after its retries — e.g. a free-tier model

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
+from repopilot.agents.answer_critic import select_evidence
 from repopilot.evaluation.metrics import EvalQuestion
 from repopilot.services.llm_service import get_fallback_llm, get_judge_llm, with_schema
 
@@ -54,7 +55,9 @@ async def judge_answer(question: EvalQuestion, answer: str, tool_outputs: list[s
     prompt = _JUDGE_PROMPT.format(
         question=question.question,
         facts="\n".join(f"- {f}" for f in question.expected_facts) or "(none)",
-        context="\n---\n".join(tool_outputs)[:_JUDGE_CONTEXT_CHARS] or "(nothing retrieved)",
+        # the chunks that back the answer, not the first 12k characters: after a few searches,
+        # the read that answered the question came last and was cut (seen in /eval)
+        context=select_evidence(tool_outputs, answer, _JUDGE_CONTEXT_CHARS) or "(nothing retrieved)",
         answer=answer,
     )
     verdict = await llm.ainvoke(prompt)

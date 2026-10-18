@@ -50,6 +50,15 @@ def test_judge_clamps_scores_and_handles_no_evidence(monkeypatch):
     assert "(nothing retrieved)" in prompt
 
 
+def test_judge_sees_the_evidence_behind_the_answer_even_after_long_searches(monkeypatch):
+    verdict = JudgeVerdict(faithfulness=1.0, correctness=1.0, reason="ok")
+    searches = [f"File: other_{i}.py\n" + "unrelated code\n" * 400 for i in range(4)]  # ~24k characters
+    backing = "File: orchestrator.py\n    def _execute(self, task):\n        self.store.fail_task(...)"
+    _, prompt = _run_judge(monkeypatch, verdict, [*searches, backing])
+
+    assert "self.store.fail_task" in prompt  # the last read, past the 12k limit, still reaches the judge
+
+
 # ── /judge_check: judge vs human agreement ──────────────────────
 
 

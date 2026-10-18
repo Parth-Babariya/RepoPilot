@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-145%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-146%20passing-brightgreen)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 [Features](#features) · [Architecture](#architecture) · [Getting started](#getting-started) · [Configuration](#configuration) · [Evaluation](#evaluation) · [Project structure](#project-structure)
@@ -595,7 +595,7 @@ All settings live in [`src/config/config.yaml`](src/config/config.yaml), documen
 | Correctness | Does the answer fully answer the question? (LLM judge) |
 | Latency, cost | From the usage tracker |
 
-**Why both kinds of metric?** The deterministic metrics ([`metrics.py`](src/evaluation/metrics.py)) are free, exactly repeatable and unit-tested, but they only check *what* was retrieved and *which* words appear. An answer can mention every expected fact and still be wrong, or invent a function that doesn't exist. The LLM judge ([`judge.py`](src/evaluation/judge.py)) catches those cases. It is a separate `judge_model` running at temperature 0, and it sees exactly the code the agent retrieved, so it can check each claim against the evidence. Its cost is reported separately so it doesn't inflate the cost per question.
+**Why both kinds of metric?** The deterministic metrics ([`metrics.py`](src/evaluation/metrics.py)) are free, exactly repeatable and unit-tested, but they only check *what* was retrieved and *which* words appear. An answer can mention every expected fact and still be wrong, or invent a function that doesn't exist. The LLM judge ([`judge.py`](src/evaluation/judge.py)) catches those cases. It is a separate `judge_model` running at temperature 0. It sees the code the agent retrieved (the chunks most relevant to the answer, up to 12,000 characters), so it can check each claim against the evidence. Its cost is reported separately so it doesn't inflate the cost per question.
 
 Each run is saved with a snapshot of the configuration, and the report shows the change from the previous run. To measure what a component adds, run once with it switched off and once with it on.
 
@@ -631,32 +631,39 @@ With 24 questions, one question is about 4 points, so small gaps are noise. The 
 
 ### Full `/eval` results
 
-Measured on 2026-10-17: all 24 questions, 0 errors. Agent `gemini-3.5-flash-lite`, judge `openai/gpt-oss-20b` on Groq, `bge-small` embeddings, Chroma, vector search, call-graph tools on. All of it ran on free tiers.
+All 24 questions, agent `gemini-3.5-flash-lite`, judge `openai/gpt-oss-20b` on Groq, `bge-small` embeddings, Chroma, call-graph tools on. All of it ran on free tiers.
 
-| Metric | Default configuration |
-|---|---|
-| Retrieval hit rate (top 5) | 88% |
-| Retrieval MRR | 0.63 |
-| Context recall (expected files the agent's tools returned) | 94% |
-| Fact recall (expected facts the answer mentions) | 89% |
-| Faithfulness (LLM judge, 0–1) | 0.91 |
-| Correctness (LLM judge, 0–1) | 0.92 |
-| Average answer time | 17.2 s |
-| Cost per question | $0 (free tiers) |
+| Metric | 2026-10-17 | 2026-10-18 (current) |
+|---|---|---|
+| Search | vector | hybrid (vector + BM25) |
+| Answered without error | 24 / 24 | 24 / 24 |
+| Retrieval hit rate (top 5) | 88% | 92% |
+| Retrieval MRR | 0.63 | 0.72 |
+| Context recall (expected files the agent's tools returned) | 94% | 96% |
+| Fact recall (expected facts the answer mentions) | 89% | 92% |
+| Faithfulness (LLM judge, 0–1) | 0.91 | 0.98 |
+| Correctness (LLM judge, 0–1) | 0.92 | 0.96 |
+| Answers scoring ≥ 0.9 on both judge metrics | 19 / 24 | 22 / 24 |
+| Answer time: median / mean / slowest | 7.7 s / 17.2 s / 87 s | 3.1 s / 4.5 s / 17 s |
+| Cost per question | $0 (free tiers) | $0 (free tiers) |
 
-19 of the 24 answers scored 0.9 or higher on both judge metrics. The eval runs also exposed three problems, which are now fixed:
-- **The summariser removed the question mid-answer.** In this run, an answer that took 10 searches pushed its own question out of the kept window, the question was summarised away, and the agent replied as if the conversation had been reset. That question scored 0. Summarisation now never touches the question being answered.
-- **MCP errors ended answers.** In a run with the call-graph tools off, two GitHub MCP lookups that returned "Not Found" each aborted the whole answer. MCP errors now come back to the agent as tool results.
-- **One expected fact was stale.** It still named `run_subtask_agent`, which was renamed in the restructure.
+**What changed between the runs.** Answers are about 4× faster on average because RepoPilot now searches once before the agent starts (most questions are answered from that search, with no further tool calls), module-level code such as constants and config tables is indexed, and a repeated search returns a reminder instead of the same results. Hybrid search became the default after the retrieval benchmark above.
 
-So these numbers are, if anything, slightly pessimistic for the current code.
+**Read the judge scores with one caveat.** Part of the faithfulness and correctness gain comes from fixing the judge, not the agent. The judge used to read only the first 12,000 characters of what the agent retrieved; when an answer came from a read after several searches, the evidence was cut and the judge marked correct answers as unsupported. On 2026-10-18 it did that to two answers that were checked by hand against the code and are correct. It now gets the chunks that back the answer (the same selection the `/ask` answer critic uses). The same day's run with the old judge scored 0.92 faithfulness and 0.89 correctness. Retrieval, recall and timing don't depend on the judge, so those columns compare directly.
+
+The remaining low scores are partial answers: `retriever_choice` doesn't mention hybrid mode and `llm_provider` doesn't name `get_llm` (0.6 correctness each).
+
+The eval runs also exposed problems that are now fixed:
+- **The summariser removed the question mid-answer.** An answer that took 10 searches pushed its own question out of the kept window, the question was summarised away, and the agent replied as if the conversation had been reset. Summarisation now never touches the question being answered.
+- **MCP errors ended answers.** Two GitHub MCP lookups that returned "Not Found" each aborted the whole answer. MCP errors now come back to the agent as tool results.
+- **A quota error is reported, not hidden.** In one run the main model was overloaded and the fallback model had used its 20 requests for the day, so one question failed. The report counts it as an error rather than a score.
 
 <!-- Fill in from your own /eval runs: run once per row, changing only the setting named, with the same judge model. -->
 
 | Configuration | Hit rate | MRR | Faithfulness | Correctness | Cost / question |
 |---|---|---|---|---|---|
-| Vector search only (`symbols.enabled: false`) | | | | | |
-| + call-graph tools (default) | | | | | |
+| Call-graph tools off (`symbols.enabled: false`) | | | | | |
+| Default: hybrid search + call-graph tools | 92% | 0.72 | 0.98 | 0.96 | $0 |
 | + reranking (`rerank.enabled: true`) | | | | | |
 
 Comparing settings takes one `/eval` per row, about 190 model calls each. On free tiers that is more than a day's quota allows: Gemini Flash-Lite gives 500 requests per day per model, and Groq gives 200k tokens per day per model, about two runs of judging.
