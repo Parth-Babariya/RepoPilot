@@ -9,7 +9,7 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-agents-1C3C3C)
 ![Gemini](https://img.shields.io/badge/Gemini-free%20tier-8E75B2?logo=googlegemini&logoColor=white)
 ![Redis](https://img.shields.io/badge/Redis-semantic%20cache-DC382D?logo=redis&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-146%20passing-brightgreen)
+[![CI](https://github.com/Parth-Babariya/RepoPilot/actions/workflows/ci.yml/badge.svg)](https://github.com/Parth-Babariya/RepoPilot/actions/workflows/ci.yml)
 ![Poetry](https://img.shields.io/badge/packaging-Poetry-60A5FA?logo=poetry&logoColor=white)
 
 
@@ -185,7 +185,7 @@ Each layer only uses the layers below it, and a [test](tests/test_architecture.p
 - Optional: Redis (for the cache), Qdrant (an alternative vector store) and Node.js (for MCP tools).
 
 ```bash
-git clone https://github.com/<your-username>/repopilot.git && cd repopilot
+git clone https://github.com/Parth-Babariya/RepoPilot.git && cd RepoPilot
 poetry env use 3.12                # create the environment with Python 3.12
 poetry install                     # installs dependencies and pytest
 poetry run pip install -e . --no-deps   # registers the `repopilot` package and command
@@ -197,7 +197,7 @@ Then run RepoPilot **from inside the repository you want to analyse**. `--projec
 
 ```bash
 cd /path/to/any/repo
-poetry --project /path/to/repopilot run repopilot
+poetry --project /path/to/RepoPilot run repopilot
 ```
 
 Or activate the environment once and run `repopilot` from any folder:
@@ -208,7 +208,7 @@ Or activate the environment once and run `repopilot` from any folder:
 <summary>Without Poetry (plain pip)</summary>
 
 ```bash
-cd repopilot
+cd RepoPilot
 python3.12 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
