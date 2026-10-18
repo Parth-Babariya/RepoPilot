@@ -57,7 +57,7 @@ def display_path(path: str) -> str:
 def format_sources(sources: list[Source], limit: int = 8) -> list[str]:
     """
     Group by file (in the order first seen) and merge overlapping line ranges:
-      ["workflows/plan_workflow.py:97-115", "workflows/task_store.py:247-262, 270"]
+      ["workflows/orchestrator.py:97-115", "workflows/task_store.py:247-262, 270"]
     """
     by_file: dict[str, list[tuple[int, int]]] = {}
     for s in sources:

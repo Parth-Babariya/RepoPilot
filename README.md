@@ -71,7 +71,7 @@ flowchart TB
         direction LR
         evalwf["evaluation/<br/>/eval · /judge_check"]
         askwf["ask_workflow<br/>cache → agent →<br/>checks → revise"]
-        planwf["plan_workflow<br/>task loop · retries ·<br/>re-plan · worktree"]
+        planwf["plan_workflow → orchestrator<br/>task loop · retries ·<br/>re-plan · worktree"]
         hitl{{"approval<br/>you decide"}}
         exec["task_execution<br/>agent → checks → critic"]
     end
@@ -172,7 +172,7 @@ RepoPilot has **seven LLM roles**. Two are true agents that use tools in a loop:
 sequenceDiagram
     autonumber
     actor U as You
-    participant W as plan_workflow
+    participant W as plan_workflow / orchestrator
     participant P as Planner
     participant T as Task agent
     participant V as verification
@@ -312,7 +312,7 @@ flowchart TD
     recover --> wt
     wt --> ready
 
-    subgraph orchestrator["Orchestrator loop · plan_workflow"]
+    subgraph orchestrator["Orchestrator loop · orchestrator.py"]
         ready["Pick ready tasks<br/>all dependencies done"] --> claim["Claim task<br/>atomic update"]
         claim --> worker["Task agent<br/>tools chosen by task type"]
         worker --> checks{"verification<br/>files exist and parse ·<br/>verify_command exits 0"}
@@ -677,7 +677,8 @@ repopilot/
 │   ├── workflows/               how agents are chained together
 │   │   ├── ask_workflow.py        cache → Q&A agent → answer checks → one revision
 │   │   ├── answer_verification.py citation checks → answer critic
-│   │   ├── plan_workflow.py       orchestrator loop: ready tasks, retries, re-planning
+│   │   ├── plan_workflow.py       /plan entry: plan → approval → orchestrator → diff review
+│   │   ├── orchestrator.py        task loop: ready tasks, retries, re-planning, budget pauses
 │   │   ├── task_execution.py      task agent → objective checks → critic agent
 │   │   ├── verification.py        objective checks: files exist, parse, tests pass
 │   │   ├── approval.py            human-in-the-loop plan approval

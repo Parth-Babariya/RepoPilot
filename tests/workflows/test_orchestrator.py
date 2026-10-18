@@ -13,22 +13,21 @@ from tests.workflows.test_task_store import make_plan, statuses
 @pytest.fixture
 def orchestrator_module(monkeypatch):
     """
-    Import tasks.orchestrator with its LLM-backed dependencies stubbed out,
+    Import workflows.orchestrator with its LLM-backed dependencies stubbed out,
     so the execution loop can be tested without API keys or network access.
     (The planner is imported for real; tests replace its replan() call.)
     """
     stubs = {
         "repopilot.workflows.task_execution": {"execute_task": None},
         "repopilot.workflows.approval": {"present_plan_for_approval": None},
-        "repopilot.retrieval.indexing.factory": {"get_indexer": None},
     }
     for name, attrs in stubs.items():
         module = types.ModuleType(name)
         module.__dict__.update(attrs)
         monkeypatch.setitem(sys.modules, name, module)
-    monkeypatch.delitem(sys.modules, "repopilot.workflows.plan_workflow", raising=False)
+    monkeypatch.delitem(sys.modules, "repopilot.workflows.orchestrator", raising=False)
 
-    import repopilot.workflows.plan_workflow as orchestrator
+    import repopilot.workflows.orchestrator as orchestrator
 
     return orchestrator
 

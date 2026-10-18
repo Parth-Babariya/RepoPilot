@@ -16,7 +16,7 @@
 
 - id: blocked_dependents
   question: What happens to tasks whose dependency failed?
-  expected_files: [workflows/task_store.py, workflows/plan_workflow.py]
+  expected_files: [workflows/task_store.py, workflows/orchestrator.py]
   expected_facts: [block_unreachable_tasks, blocked]
 
 - id: resume_project
@@ -119,12 +119,12 @@
 # ── Exact call-graph questions (where symbol tools should help) ─
 - id: callers_fail_task
   question: What calls fail_task?
-  expected_files: [workflows/plan_workflow.py]
+  expected_files: [workflows/orchestrator.py]
   expected_facts: [_execute]
 
 - id: callees_execute
   question: What does TaskOrchestrator._execute do, step by step?
-  expected_files: [workflows/plan_workflow.py]
+  expected_files: [workflows/orchestrator.py]
   expected_facts: [claim_task, execute_task, complete_task, fail_task]
 
 - id: callers_get_retriever
