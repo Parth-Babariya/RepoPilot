@@ -8,7 +8,6 @@ from pathlib import Path
 
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.embeddings import Embeddings
-
 from repopilot.config import config
 from repopilot.observability.logger import get_logger
 
@@ -117,14 +116,30 @@ class UsageStore:
         conn.row_factory = sqlite3.Row
         return conn
 
-    def record_call(self, kind: str, model: str, input_tokens: int, output_tokens: int,
-                    latency_ms: float | None, feature: str | None = None) -> None:
+    def record_call(
+        self,
+        kind: str,
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        latency_ms: float | None,
+        feature: str | None = None,
+    ) -> None:
         try:
             with self._conn() as conn:
                 conn.execute(
                     "INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?)",
-                    (time.time(), current_session.get(), feature or current_feature.get(), kind, model,
-                     input_tokens, output_tokens, estimate_cost(model, input_tokens, output_tokens), latency_ms),
+                    (
+                        time.time(),
+                        current_session.get(),
+                        feature or current_feature.get(),
+                        kind,
+                        model,
+                        input_tokens,
+                        output_tokens,
+                        estimate_cost(model, input_tokens, output_tokens),
+                        latency_ms,
+                    ),
                 )
         except Exception as e:
             logger.warning(f"Could not record usage: {e}")
@@ -147,7 +162,8 @@ class UsageStore:
     def summary_by_feature(self, session: str | None = None) -> list[dict]:
         where, args = self._where(session)
         with self._conn() as conn:
-            rows = conn.execute(f"""
+            rows = conn.execute(
+                f"""
                 SELECT kind, feature,
                        COUNT(*)                        AS calls,
                        SUM(input_tokens + output_tokens) AS tokens,
@@ -157,7 +173,9 @@ class UsageStore:
                 FROM calls {where}
                 GROUP BY kind, feature
                 ORDER BY kind DESC, cost DESC
-            """, args).fetchall()
+            """,
+                args,
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def unpriced_models(self, session: str | None = None) -> list[str]:
@@ -170,16 +188,19 @@ class UsageStore:
     def question_summary(self, session: str | None = None) -> dict:
         where, args = self._where(session)
         with self._conn() as conn:
-            q = conn.execute(f"""
+            q = conn.execute(
+                f"""
                 SELECT COUNT(*) AS questions, COALESCE(SUM(cache_hit), 0) AS hits,
                        AVG(latency_ms) AS avg_latency_ms
                 FROM questions {where}
-            """, args).fetchone()
+            """,
+                args,
+            ).fetchone()
             ask_cost = conn.execute(
                 f"SELECT SUM(cost) FROM calls {where + ' AND' if where else 'WHERE'} feature = 'ask'", args
             ).fetchone()[0]
-        result  = dict(q)
-        misses  = result["questions"] - result["hits"]
+        result = dict(q)
+        misses = result["questions"] - result["hits"]
         # A cache hit saves roughly what an uncached /ask costs on average.
         avg_ask = (ask_cost / misses) if ask_cost and misses else None
         result["estimated_saved"] = avg_ask * result["hits"] if avg_ask is not None else None
@@ -209,6 +230,7 @@ def get_usage_store() -> UsageStore:
 # LangChain hooks
 # ------------------------------------------------------------------
 
+
 class UsageCallback(BaseCallbackHandler):
     """
     Records token usage and latency for every chat model call.
@@ -222,8 +244,8 @@ class UsageCallback(BaseCallbackHandler):
     run_inline = True
 
     def __init__(self, model: str, feature: str | None = None) -> None:
-        self.model    = model
-        self.feature  = feature
+        self.model = model
+        self.feature = feature
         self._started: dict = {}
 
     def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs) -> None:
@@ -233,19 +255,19 @@ class UsageCallback(BaseCallbackHandler):
         self._started[run_id] = time.perf_counter()
 
     def on_llm_end(self, response, *, run_id, **kwargs) -> None:
-        started    = self._started.pop(run_id, None)
+        started = self._started.pop(run_id, None)
         latency_ms = (time.perf_counter() - started) * 1000 if started else None
 
         input_tokens = output_tokens = 0
         for generations in response.generations:
             for gen in generations:
                 usage = getattr(getattr(gen, "message", None), "usage_metadata", None) or {}
-                input_tokens  += usage.get("input_tokens", 0)
+                input_tokens += usage.get("input_tokens", 0)
                 output_tokens += usage.get("output_tokens", 0)
         if not (input_tokens or output_tokens):
             # Older-style providers report usage in llm_output instead
-            token_usage   = (response.llm_output or {}).get("token_usage") or {}
-            input_tokens  = token_usage.get("prompt_tokens", 0)
+            token_usage = (response.llm_output or {}).get("token_usage") or {}
+            input_tokens = token_usage.get("prompt_tokens", 0)
             output_tokens = token_usage.get("completion_tokens", 0)
 
         if (counter := _run_tokens.get()) is not None:
@@ -280,24 +302,24 @@ class TrackedEmbeddings(Embeddings):
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         started = time.perf_counter()
-        result  = self.inner.embed_documents(texts)
+        result = self.inner.embed_documents(texts)
         self._record(texts, started)
         return result
 
     def embed_query(self, text: str) -> list[float]:
         started = time.perf_counter()
-        result  = self.inner.embed_query(text)
+        result = self.inner.embed_query(text)
         self._record([text], started)
         return result
 
     async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
         started = time.perf_counter()
-        result  = await self.inner.aembed_documents(texts)
+        result = await self.inner.aembed_documents(texts)
         self._record(texts, started)
         return result
 
     async def aembed_query(self, text: str) -> list[float]:
         started = time.perf_counter()
-        result  = await self.inner.aembed_query(text)
+        result = await self.inner.aembed_query(text)
         self._record([text], started)
         return result

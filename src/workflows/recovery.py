@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from rich.console import Console
-
-from repopilot.workflows.task_store import SQLiteTaskStore
 from repopilot.observability.logger import get_logger
+from repopilot.workflows.task_store import SQLiteTaskStore
+from rich.console import Console
 
 logger = get_logger(__name__)
 console = Console()
@@ -33,7 +32,7 @@ class RecoveryManager:
                 """SELECT id, title, retry_count, max_retries
                    FROM tasks
                    WHERE project_id = ? AND status = 'in_progress'""",
-                (project_id,)
+                (project_id,),
             ).fetchall()
 
             for task in crashed:
@@ -45,7 +44,7 @@ class RecoveryManager:
                                retry_count = retry_count + 1,
                                error       = 'CRASH: process died mid-execution'
                            WHERE project_id = ? AND id = ?""",
-                        (project_id, task["id"])
+                        (project_id, task["id"]),
                     )
                     console.print(
                         f"[yellow]🔄 Recovered:[/yellow] {task['id']} ({task['title']}) "
@@ -57,7 +56,7 @@ class RecoveryManager:
                            SET status = 'failed',
                                error  = 'CRASH: max retries exceeded after repeated crashes'
                            WHERE project_id = ? AND id = ?""",
-                        (project_id, task["id"])
+                        (project_id, task["id"]),
                     )
                     console.print(f"[red]❌ Max retries exhausted:[/red] {task['id']} → FAILED")
 

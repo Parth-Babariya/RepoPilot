@@ -1,5 +1,4 @@
 import pytest
-
 from repopilot.agents.qa_agent import SEARCH_RESULTS_MARKER
 from repopilot.workflows import ask_workflow
 from repopilot.workflows.ask_workflow import with_initial_search
@@ -26,12 +25,11 @@ def test_question_is_sent_with_its_search_results(search):
     message, found = with_initial_search("Where are orders placed?")
     assert message.startswith("Where are orders placed?")
     assert SEARCH_RESULTS_MARKER in message and "def place_order" in message
-    assert found == [search.result]                      # also evidence for the answer checks
+    assert found == [search.result]  # also evidence for the answer checks
 
 
 def test_follow_ups_about_the_last_answer_are_not_searched(search):
-    assert with_initial_search("Explain that in more detail", has_history=True) == \
-        ("Explain that in more detail", [])
+    assert with_initial_search("Explain that in more detail", has_history=True) == ("Explain that in more detail", [])
     # a new question in an old session is still searched
     assert with_initial_search("How is the cache invalidated?", has_history=True)[1]
     assert search.queries == ["How is the cache invalidated?"]

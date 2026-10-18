@@ -13,10 +13,11 @@ from enum import Enum
 
 class TaskType(str, Enum):
     """Decides which tools the task agent gets (agents/task_agent.py)."""
-    DESIGN    = "design"
+
+    DESIGN = "design"
     IMPLEMENT = "implement"
-    TEST      = "test"
-    REVIEW    = "review"
+    TEST = "test"
+    REVIEW = "review"
     INTEGRATE = "integrate"
     CONFIGURE = "configure"
 

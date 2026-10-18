@@ -8,7 +8,7 @@ from repopilot.workflows.verification import verify_task
 
 logger = get_logger(__name__)
 
-_ERROR_CHARS = 2000   # how much of a failure report is stored for the retry
+_ERROR_CHARS = 2000  # how much of a failure report is stored for the retry
 
 
 async def execute_task(task: dict, dep_outputs: list[dict] | None = None) -> str:
@@ -31,8 +31,9 @@ async def execute_task(task: dict, dep_outputs: list[dict] | None = None) -> str
         raise ValueError(f"Automatic checks failed:\n{verification.report[:_ERROR_CHARS]}")
 
     verdict = await judge_task(task, output, verification.report)
-    logger.info(f"Critic verdict for {task['id']}: score={verdict.score}, passed={verdict.passed}, "
-                f"reason={verdict.reason}")
+    logger.info(
+        f"Critic verdict for {task['id']}: score={verdict.score}, passed={verdict.passed}, reason={verdict.reason}"
+    )
     if not verdict.passed:
         raise ValueError(f"Judge rejected output (score={verdict.score}/10): {verdict.reason}")
 

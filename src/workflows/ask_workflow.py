@@ -3,14 +3,13 @@ import time
 from dataclasses import dataclass, field
 
 from repopilot.agents.qa_agent import SEARCH_RESULTS_MARKER
-from repopilot.tools.code_search import search_codebase, search_memory
-from repopilot.tools.sources import Source, collect_sources
 from repopilot.config import config
 from repopilot.guardrails.budgets import budget_exhausted, token_budget
-from repopilot.workflows.answer_verification import AnswerCheck, max_revisions, verify_answer
 from repopilot.observability.logger import get_logger
 from repopilot.observability.usage import get_usage_store
-
+from repopilot.tools.code_search import search_codebase, search_memory
+from repopilot.tools.sources import Source, collect_sources
+from repopilot.workflows.answer_verification import AnswerCheck, max_revisions, verify_answer
 
 logger = get_logger(__name__)
 
@@ -21,8 +20,8 @@ class QueryResult:
     sources: list[Source] = field(default_factory=list)
     cached: bool = False
     error: bool = False
-    check: AnswerCheck | None = None   # result of answer verification (None = not checked)
-    revised: bool = False              # the answer was rewritten after failing a check
+    check: AnswerCheck | None = None  # result of answer verification (None = not checked)
+    revised: bool = False  # the answer was rewritten after failing a check
 
 
 _REVISION_PROMPT = """An automatic check of your last answer found problems:
@@ -32,12 +31,16 @@ answer (the whole answer, not only the changes). State only what the code suppor
 something can't be confirmed from the code, say so."""
 
 
-_INITIAL_SEARCH = """{question}
+_INITIAL_SEARCH = (
+    """{question}
 
-""" + SEARCH_RESULTS_MARKER + """; the results are below. Answer from
+"""
+    + SEARCH_RESULTS_MARKER
+    + """; the results are below. Answer from
 them if they are enough, and search only for what is missing.]
 
 {results}"""
+)
 
 # "explain that more", "why does it do this?" — about the previous answer, not new code
 _BACK_REFERENCE = re.compile(r"\b(that|this|it|those|these|above|previous|earlier)\b", re.IGNORECASE)
@@ -89,9 +92,15 @@ async def _ask(agent, text: str, agent_config: dict, found: list[str] | None = N
     """
     response = await agent.ainvoke({"messages": [{"role": "user", "content": text}]}, agent_config)
     messages = response["messages"]
-    start = next((i for i in range(len(messages) - 1, -1, -1)
-                  if getattr(messages[i], "type", "") == "human" and _content(messages[i]) == text), -1)
-    evidence = (found or []) + _tool_outputs(messages[start + 1:])
+    start = next(
+        (
+            i
+            for i in range(len(messages) - 1, -1, -1)
+            if getattr(messages[i], "type", "") == "human" and _content(messages[i]) == text
+        ),
+        -1,
+    )
+    evidence = (found or []) + _tool_outputs(messages[start + 1 :])
     return _content(messages[-1]), evidence or _tool_outputs(messages)[-10:]
 
 

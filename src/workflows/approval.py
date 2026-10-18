@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from repopilot.agents.planner_agent import ExecutionPlan, PlannedTask
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
-from repopilot.agents.planner_agent import ExecutionPlan, PlannedTask
-
 console = Console()
 
 
-def present_plan_for_approval(plan: ExecutionPlan, title: str = "Plan",
-                              reject_label: str = "[R]eject and re-plan") -> ExecutionPlan | None:
+def present_plan_for_approval(
+    plan: ExecutionPlan, title: str = "Plan", reject_label: str = "[R]eject and re-plan"
+) -> ExecutionPlan | None:
     """
     Render the plan as a Rich table and prompt the user to:
       [A] Approve — returns the plan as-is
@@ -67,11 +67,11 @@ def _render_plan(plan: ExecutionPlan, title: str) -> None:
     console.print()
 
     table = Table(show_header=True, header_style="bold")
-    table.add_column("ID",          style="dim",    width=12)
-    table.add_column("Type",        width=10)
-    table.add_column("Title",       width=32)
-    table.add_column("Depends on",  width=20)
-    table.add_column("Output files",width=30)
+    table.add_column("ID", style="dim", width=12)
+    table.add_column("Type", width=10)
+    table.add_column("Title", width=32)
+    table.add_column("Depends on", width=20)
+    table.add_column("Output files", width=30)
 
     for task in plan.tasks:
         table.add_row(
@@ -86,7 +86,9 @@ def _render_plan(plan: ExecutionPlan, title: str) -> None:
 
     checks = [t for t in plan.tasks if t.verify_command.strip()]
     if checks:
-        console.print("\n[bold]Verify commands[/bold] [dim](run after each task — approving the plan allows them)[/dim]")
+        console.print(
+            "\n[bold]Verify commands[/bold] [dim](run after each task — approving the plan allows them)[/dim]"
+        )
         for task in checks:
             console.print(f"  {task.id}: [cyan]{escape(task.verify_command)}[/cyan]")
 

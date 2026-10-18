@@ -6,24 +6,28 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-
-from rich.console import Console
-from rich.table import Table
-
 from repopilot.config import config
+from repopilot.evaluation.judge import judge_answer
+from repopilot.evaluation.metrics import (
+    EvalQuestion,
+    context_recall,
+    fact_recall,
+    load_questions,
+    mean,
+    reciprocal_rank,
+    retrieval_rank,
+)
+from repopilot.observability.logger import get_logger
+from repopilot.observability.usage import get_usage_store, track
 from repopilot.retrieval.search.factory import get_retriever
 from repopilot.retrieval.search.reranker import rerank_config
 from repopilot.retrieval.symbol_index import symbols_enabled
 from repopilot.tools.code_search import search_memory
 from repopilot.workflows.ask_workflow import with_initial_search
-from repopilot.evaluation.judge import judge_answer
-from repopilot.evaluation.metrics import (
-    EvalQuestion, context_recall, fact_recall, load_questions, mean, reciprocal_rank, retrieval_rank,
-)
-from repopilot.observability.logger import get_logger
-from repopilot.observability.usage import get_usage_store, track
+from rich.console import Console
+from rich.table import Table
 
-logger  = get_logger(__name__)
+logger = get_logger(__name__)
 console = Console()
 
 # ------------------------------------------------------------------
@@ -59,7 +63,7 @@ async def _evaluate_one(agent, question: EvalQuestion, run_id: str, top_k: int) 
     with track("eval", session):
         # 1. Raw retrieval quality
         chunks = get_retriever()(question.question, k=top_k)
-        rank   = retrieval_rank([c["source"] for c in chunks], question.expected_files)
+        rank = retrieval_rank([c["source"] for c in chunks], question.expected_files)
         if question.expected_files:
             result["retrieval_rank"] = rank
             result["hit"] = rank is not None
@@ -76,23 +80,23 @@ async def _evaluate_one(agent, question: EvalQuestion, run_id: str, top_k: int) 
             )
         result["latency_s"] = round(time.perf_counter() - started, 2)
 
-        messages     = response["messages"]
-        answer       = _content(messages[-1])
+        messages = response["messages"]
+        answer = _content(messages[-1])
         tool_outputs = found + [_content(m) for m in messages if getattr(m, "type", "") == "tool"]
-        result["answer"]     = answer
+        result["answer"] = answer
         result["tools_used"] = [tc["name"] for m in messages for tc in (getattr(m, "tool_calls", None) or [])]
 
         # 3. Scores
         result["context_recall"] = context_recall(tool_outputs, question.expected_files)
-        result["fact_recall"]    = fact_recall(answer, question.expected_facts)
+        result["fact_recall"] = fact_recall(answer, question.expected_facts)
         verdict = await judge_answer(question, answer, tool_outputs)
         result["faithfulness"] = verdict.faithfulness
-        result["correctness"]  = verdict.correctness
+        result["correctness"] = verdict.correctness
         result["judge_reason"] = verdict.reason
 
     # 4. Cost of answering (judge cost reported separately in the summary)
     store = get_usage_store()
-    result["cost"]       = store.total_cost(session, exclude_feature="eval-judge")
+    result["cost"] = store.total_cost(session, exclude_feature="eval-judge")
     result["judge_cost"] = store.total_cost(session) - result["cost"]
     return result
 
@@ -100,30 +104,30 @@ async def _evaluate_one(agent, question: EvalQuestion, run_id: str, top_k: int) 
 def _summarise(results: list[dict]) -> dict:
     ok = [r for r in results if "error" not in r]
     return {
-        "questions":       len(results),
-        "errors":          len(results) - len(ok),
-        "hit_rate":        mean([float(r["hit"]) for r in ok if "hit" in r]),
-        "mrr":             mean([r["reciprocal_rank"] for r in ok if "reciprocal_rank" in r]),
-        "context_recall":  mean([r.get("context_recall") for r in ok]),
-        "fact_recall":     mean([r.get("fact_recall") for r in ok]),
-        "faithfulness":    mean([r.get("faithfulness") for r in ok]),
-        "correctness":     mean([r.get("correctness") for r in ok]),
-        "avg_latency_s":   mean([r.get("latency_s") for r in ok]),
-        "avg_cost":        mean([r.get("cost") for r in ok]),
-        "judge_cost":      sum(r.get("judge_cost", 0) for r in ok),
+        "questions": len(results),
+        "errors": len(results) - len(ok),
+        "hit_rate": mean([float(r["hit"]) for r in ok if "hit" in r]),
+        "mrr": mean([r["reciprocal_rank"] for r in ok if "reciprocal_rank" in r]),
+        "context_recall": mean([r.get("context_recall") for r in ok]),
+        "fact_recall": mean([r.get("fact_recall") for r in ok]),
+        "faithfulness": mean([r.get("faithfulness") for r in ok]),
+        "correctness": mean([r.get("correctness") for r in ok]),
+        "avg_latency_s": mean([r.get("latency_s") for r in ok]),
+        "avg_cost": mean([r.get("cost") for r in ok]),
+        "judge_cost": sum(r.get("judge_cost", 0) for r in ok),
     }
 
 
 def _config_snapshot(top_k: int) -> dict:
     return {
-        "llm":            config["llm"]["model"],
-        "judge":          config["llm"].get("judge_model"),
-        "embeddings":     config["embeddings"]["model"],
-        "vector_store":   config["vector_store"]["provider"],
-        "rag_mode":       config["rag"]["mode"],
-        "symbol_tools":   symbols_enabled(),
-        "rerank":         rerank_config()["model"] if rerank_config()["enabled"] else False,
-        "top_k":          top_k,
+        "llm": config["llm"]["model"],
+        "judge": config["llm"].get("judge_model"),
+        "embeddings": config["embeddings"]["model"],
+        "vector_store": config["vector_store"]["provider"],
+        "rag_mode": config["rag"]["mode"],
+        "symbol_tools": symbols_enabled(),
+        "rerank": rerank_config()["model"] if rerank_config()["enabled"] else False,
+        "top_k": top_k,
     }
 
 
@@ -133,14 +137,14 @@ def _config_snapshot(top_k: int) -> dict:
 
 _SUMMARY_ROWS = [
     # key, label, format, higher_is_better
-    ("hit_rate",       "Retrieval hit rate",  "pct",   True),
-    ("mrr",            "Retrieval MRR",       "num",   True),
-    ("context_recall", "Context recall",      "pct",   True),
-    ("fact_recall",    "Fact recall",         "pct",   True),
-    ("faithfulness",   "Faithfulness",        "num",   True),
-    ("correctness",    "Correctness",         "num",   True),
-    ("avg_latency_s",  "Avg answer time",     "sec",   False),
-    ("avg_cost",       "Avg cost / question", "money", False),
+    ("hit_rate", "Retrieval hit rate", "pct", True),
+    ("mrr", "Retrieval MRR", "num", True),
+    ("context_recall", "Context recall", "pct", True),
+    ("fact_recall", "Fact recall", "pct", True),
+    ("faithfulness", "Faithfulness", "num", True),
+    ("correctness", "Correctness", "num", True),
+    ("avg_latency_s", "Avg answer time", "sec", False),
+    ("avg_cost", "Avg cost / question", "money", False),
 ]
 
 
@@ -153,12 +157,16 @@ def _fmt(value, kind: str) -> str:
 def _delta(new, old, kind: str, higher_is_better: bool) -> str:
     if new is None or old is None or new == old:
         return ""
-    diff  = new - old
-    good  = (diff > 0) == higher_is_better
+    diff = new - old
+    good = (diff > 0) == higher_is_better
     color = "green" if good else "red"
-    sign  = "+" if diff > 0 else "−"
-    text  = {"pct": f"{abs(diff):.0%}", "num": f"{abs(diff):.2f}", "sec": f"{abs(diff):.1f}s",
-             "money": f"${abs(diff):.4f}"}[kind]
+    sign = "+" if diff > 0 else "−"
+    text = {
+        "pct": f"{abs(diff):.0%}",
+        "num": f"{abs(diff):.2f}",
+        "sec": f"{abs(diff):.1f}s",
+        "money": f"${abs(diff):.4f}",
+    }[kind]
     return f"[{color}]{sign}{text}[/{color}]"
 
 
@@ -184,21 +192,25 @@ def _print_report(run: dict, previous: dict | None) -> None:
         table.add_row(
             r["id"],
             "–" if "hit" not in r else (f"#{rank}" if rank else "[red]miss[/red]"),
-            _fmt(r.get("context_recall"), "pct"), _fmt(r.get("fact_recall"), "pct"),
-            _fmt(r.get("faithfulness"), "num"), _fmt(r.get("correctness"), "num"),
-            _fmt(r.get("latency_s"), "sec"), _fmt(r.get("cost"), "money"),
+            _fmt(r.get("context_recall"), "pct"),
+            _fmt(r.get("fact_recall"), "pct"),
+            _fmt(r.get("faithfulness"), "num"),
+            _fmt(r.get("correctness"), "num"),
+            _fmt(r.get("latency_s"), "sec"),
+            _fmt(r.get("cost"), "money"),
         )
     console.print(table)
 
     summary = run["summary"]
-    old     = previous["summary"] if previous else {}
-    totals  = Table(show_header=True, header_style="bold", title="Summary")
+    old = previous["summary"] if previous else {}
+    totals = Table(show_header=True, header_style="bold", title="Summary")
     totals.add_column("Metric")
     totals.add_column("This run", justify="right")
     totals.add_column(f"vs {previous['run_id']}" if previous else "vs previous", justify="right")
     for key, label, kind, higher_is_better in _SUMMARY_ROWS:
-        totals.add_row(label, _fmt(summary.get(key), kind),
-                       _delta(summary.get(key), old.get(key), kind, higher_is_better))
+        totals.add_row(
+            label, _fmt(summary.get(key), kind), _delta(summary.get(key), old.get(key), kind, higher_is_better)
+        )
     console.print(totals)
 
     cfg = run["config"]
@@ -216,28 +228,31 @@ def _print_report(run: dict, previous: dict | None) -> None:
 # Entry point — called by main.py for /eval [questions_file]
 # ------------------------------------------------------------------
 
+
 async def run_eval(agent, questions_file: str | None = None) -> dict | None:
-    eval_cfg    = config.get("eval", {})
-    path        = Path(questions_file or eval_cfg.get("questions_file", "data/evals/questions.yaml"))
+    eval_cfg = config.get("eval", {})
+    path = Path(questions_file or eval_cfg.get("questions_file", "data/evals/questions.yaml"))
     results_dir = Path(eval_cfg.get("results_dir", ".repopilot/evals"))
-    top_k       = int(eval_cfg.get("top_k", 5))
+    top_k = int(eval_cfg.get("top_k", 5))
 
     if not path.exists():
         console.print(f"[yellow]Questions file not found: {path}[/yellow]")
-        console.print("[dim]Create one (see data/evals/questions.yaml in the RepoPilot repo for the format) "
-                      "or pass a path: /eval path/to/questions.yaml[/dim]")
+        console.print(
+            "[dim]Create one (see data/evals/questions.yaml in the RepoPilot repo for the format) "
+            "or pass a path: /eval path/to/questions.yaml[/dim]"
+        )
         return None
 
     questions = load_questions(path)
-    run_id    = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     console.print(f"\n[bold]Eval run {run_id}[/bold] — {len(questions)} questions from {path}")
     console.print("[dim]Each question runs the full /ask agent plus a judge call; this costs real API usage.[/dim]\n")
 
-    delay   = float(eval_cfg.get("delay_seconds", 0))
+    delay = float(eval_cfg.get("delay_seconds", 0))
     results = []
     for i, question in enumerate(questions, 1):
         if i > 1 and delay:
-            await asyncio.sleep(delay)   # stay under free-tier requests-per-minute limits
+            await asyncio.sleep(delay)  # stay under free-tier requests-per-minute limits
         console.print(f"[dim][{i}/{len(questions)}] {question.question}[/dim]")
         try:
             results.append(await _evaluate_one(agent, question, run_id, top_k))
@@ -246,11 +261,11 @@ async def run_eval(agent, questions_file: str | None = None) -> dict | None:
             results.append({"id": question.id, "question": question.question, "error": str(e)})
 
     run = {
-        "run_id":         run_id,
+        "run_id": run_id,
         "questions_file": str(path),
-        "config":         _config_snapshot(top_k),
-        "summary":        _summarise(results),
-        "results":        results,
+        "config": _config_snapshot(top_k),
+        "summary": _summarise(results),
+        "results": results,
     }
     results_dir.mkdir(parents=True, exist_ok=True)
     out_path = results_dir / f"run_{run_id}.json"

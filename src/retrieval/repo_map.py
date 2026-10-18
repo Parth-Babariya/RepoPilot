@@ -26,14 +26,31 @@ from repopilot.retrieval.symbol_index import get_symbol_store, symbols_enabled
 _MAX_CHARS = 6000
 _MAX_METHODS = 6
 _MAX_SYMBOLS_PER_FILE = 8
-_MANIFESTS = ("pyproject.toml", "requirements.txt", "setup.py", "package.json", "go.mod", "Cargo.toml",
-              "pom.xml", "build.gradle", "Makefile", "Dockerfile", "pytest.ini", "conftest.py", "tox.ini")
+_MANIFESTS = (
+    "pyproject.toml",
+    "requirements.txt",
+    "setup.py",
+    "package.json",
+    "go.mod",
+    "Cargo.toml",
+    "pom.xml",
+    "build.gradle",
+    "Makefile",
+    "Dockerfile",
+    "pytest.ini",
+    "conftest.py",
+    "tox.ini",
+)
 
 
 def _is_test(path: str) -> bool:
     p = Path(path)
-    return (any(part in ("tests", "test", "__tests__", "spec") for part in p.parts[:-1])
-            or p.name.startswith("test_") or p.stem.endswith(("_test", ".test", ".spec")) or p.name == "conftest.py")
+    return (
+        any(part in ("tests", "test", "__tests__", "spec") for part in p.parts[:-1])
+        or p.name.startswith("test_")
+        or p.stem.endswith(("_test", ".test", ".spec"))
+        or p.name == "conftest.py"
+    )
 
 
 def _symbols_by_file(root: Path) -> dict[str, list[dict]]:
@@ -45,7 +62,7 @@ def _symbols_by_file(root: Path) -> dict[str, list[dict]]:
         for row in rows:
             try:
                 rel = Path(os.path.relpath(row["file"], root)).as_posix()
-            except ValueError:      # another drive on Windows: not in this repo
+            except ValueError:  # another drive on Windows: not in this repo
                 continue
             if not rel.startswith(".."):
                 by_file[rel].append(dict(row))
@@ -62,7 +79,7 @@ def _outline(symbols: list[dict], with_methods: bool) -> str:
     parts = []
     for s in symbols:
         if "." in s["qualname"]:
-            continue                                    # methods are listed under their class
+            continue  # methods are listed under their class
         if s["kind"] == "class" and with_methods and methods[s["name"]]:
             names = [m for m in methods[s["name"]] if not m.startswith("__")][:_MAX_METHODS]
             more = ", …" if len(methods[s["name"]]) > len(names) else ""
@@ -93,13 +110,16 @@ def build_repo_map(root: str | Path | None = None, max_chars: int = _MAX_CHARS) 
             tests[Path(f).parent.as_posix()] += 1
         elif not (Path(f).name == "__init__.py" and not symbols.get(f)):
             listed.append(f)
-    test_lines = [f"{folder}/  ({count} test file{'s' if count != 1 else ''})"
-                  for folder, count in sorted(tests.items())]
+    test_lines = [
+        f"{folder}/  ({count} test file{'s' if count != 1 else ''})" for folder, count in sorted(tests.items())
+    ]
 
     def render(with_symbols: bool, with_methods: bool) -> str:
         width = min(max((len(f) for f in listed), default=0), 48)
-        lines = [f"{f:<{width}}  {_outline(symbols.get(f, []), with_methods) if with_symbols else ''}".rstrip()
-                 for f in listed]
+        lines = [
+            f"{f:<{width}}  {_outline(symbols.get(f, []), with_methods) if with_symbols else ''}".rstrip()
+            for f in listed
+        ]
         return "\n".join(header + lines + test_lines)
 
     for with_symbols, with_methods in ((True, True), (True, False), (False, False)):

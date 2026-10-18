@@ -1,11 +1,9 @@
 import chromadb
-
 from repopilot.config import config
+from repopilot.observability.logger import get_logger
 from repopilot.retrieval.indexing.chroma import chroma_collection_name
 from repopilot.retrieval.search import bm25
 from repopilot.services.llm_service import get_embedder
-from repopilot.observability.logger import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -30,15 +28,17 @@ def _dense(query: str, k: int) -> list[dict]:
     )
     return [
         {
-            "content":    doc,
-            "source":     meta["source"],
-            "name":       meta["name"],
-            "type":       meta["type"],
+            "content": doc,
+            "source": meta["source"],
+            "name": meta["name"],
+            "type": meta["type"],
             "start_line": meta["start_line"],
-            "end_line":   meta["end_line"],
-            "distance":   dist,   # lower = more similar
+            "end_line": meta["end_line"],
+            "distance": dist,  # lower = more similar
         }
-        for doc, meta, dist in zip(results["documents"][0], results["metadatas"][0], results["distances"][0])
+        for doc, meta, dist in zip(
+            results["documents"][0], results["metadatas"][0], results["distances"][0], strict=False
+        )
     ]
 
 
@@ -48,15 +48,15 @@ def _all_chunks() -> list[dict]:
     logger.info(f"Building BM25 index over {len(stored['ids'])} chunks")
     return [
         {
-            "content":    doc,
-            "source":     meta["source"],
-            "name":       meta["name"],
-            "type":       meta["type"],
+            "content": doc,
+            "source": meta["source"],
+            "name": meta["name"],
+            "type": meta["type"],
             "start_line": meta["start_line"],
-            "end_line":   meta["end_line"],
-            "distance":   None,
+            "end_line": meta["end_line"],
+            "distance": None,
         }
-        for doc, meta in zip(stored["documents"], stored["metadatas"])
+        for doc, meta in zip(stored["documents"], stored["metadatas"], strict=False)
     ]
 
 
@@ -72,8 +72,8 @@ def retrieve(query: str, k: int = 5) -> list[dict]:
         return chunks
 
     n = max(k, _MIN_CANDIDATES)
-    dense  = _dense(query, n)
+    dense = _dense(query, n)
     sparse = bm25.search(query, n, _all_chunks)
-    fused  = bm25.reciprocal_rank_fusion([dense, sparse])[:k]
+    fused = bm25.reciprocal_rank_fusion([dense, sparse])[:k]
     logger.info(f"Hybrid search: {len(dense)} vector + {len(sparse)} keyword → top {len(fused)} for: {query}")
     return fused

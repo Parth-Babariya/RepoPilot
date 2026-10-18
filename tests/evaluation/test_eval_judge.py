@@ -52,10 +52,11 @@ def test_judge_clamps_scores_and_handles_no_evidence(monkeypatch):
 
 # ── /judge_check: judge vs human agreement ──────────────────────
 
+
 def test_cohen_kappa():
-    assert cohen_kappa([(True, True), (False, False)]) == 1.0           # perfect agreement
-    assert cohen_kappa([(True, False), (False, True)]) == -1.0          # always opposite
-    assert cohen_kappa([(True, True), (True, True)]) is None            # no variation → undefined
+    assert cohen_kappa([(True, True), (False, False)]) == 1.0  # perfect agreement
+    assert cohen_kappa([(True, False), (False, True)]) == -1.0  # always opposite
+    assert cohen_kappa([(True, True), (True, True)]) is None  # no variation → undefined
     assert cohen_kappa([]) is None
 
 
@@ -64,7 +65,7 @@ def test_agreement_thresholds_judge_scores_and_lists_disagreements():
         {"id": "q1", "correctness": 0.9},
         {"id": "q2", "correctness": 0.2},
         {"id": "q3", "correctness": 0.8},
-        {"id": "q4", "correctness": 0.7},     # not labelled → ignored
+        {"id": "q4", "correctness": 0.7},  # not labelled → ignored
     ]
     labels = {"q1": {"correctness": True}, "q2": {"correctness": False}, "q3": {"correctness": False}}
 

@@ -5,7 +5,6 @@ from contextlib import contextmanager
 
 from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware, ToolCallLimitMiddleware, hook_config
 from langchain_core.messages import AIMessage
-
 from repopilot.config import config
 from repopilot.observability.usage import metered, run_tokens
 
@@ -28,11 +27,11 @@ from repopilot.observability.usage import metered, run_tokens
 # ------------------------------------------------------------------
 
 _DEFAULTS = {
-    "ask_tokens":      250_000,     # largest /ask measured so far used ~75k
-    "plan_tokens":     1_000_000,   # whole /plan runs measured so far used ~40k-105k
-    "qa_tool_calls":   15,
+    "ask_tokens": 250_000,  # largest /ask measured so far used ~75k
+    "plan_tokens": 1_000_000,  # whole /plan runs measured so far used ~40k-105k
+    "qa_tool_calls": 15,
     "task_tool_calls": 40,
-    "model_calls":     30,
+    "model_calls": 30,
 }
 
 _limit: contextvars.ContextVar[int | None] = contextvars.ContextVar("repopilot_token_limit", default=None)

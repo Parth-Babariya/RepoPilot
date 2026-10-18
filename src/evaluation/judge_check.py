@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from repopilot.config import config
+from repopilot.evaluation.metrics import load_questions
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.markup import escape
 from rich.prompt import Prompt
 from rich.table import Table
-
-from repopilot.config import config
-from repopilot.evaluation.metrics import load_questions
 
 console = Console()
 
@@ -26,7 +25,7 @@ console = Console()
 # 1 = perfect, 0 = no better than chance).
 # ------------------------------------------------------------------
 
-JUDGE_PASS = 0.5   # a judge score at or above this counts as "yes"
+JUDGE_PASS = 0.5  # a judge score at or above this counts as "yes"
 
 
 def cohen_kappa(pairs: list[tuple[bool, bool]]) -> float | None:
@@ -39,7 +38,7 @@ def cohen_kappa(pairs: list[tuple[bool, bool]]) -> float | None:
     p_b = sum(b for _, b in pairs) / n
     expected = p_a * p_b + (1 - p_a) * (1 - p_b)
     if expected == 1:
-        return None   # both raters gave the same label every time — kappa is undefined
+        return None  # both raters gave the same label every time — kappa is undefined
     return (observed - expected) / (1 - expected)
 
 
@@ -56,14 +55,15 @@ def agreement(results: list[dict], labels: dict, metric: str) -> dict:
             disagreements.append({"id": r["id"], "judge": r[metric], "human": label})
     n = len(pairs)
     return {
-        "n":             n,
-        "agreement":     (sum(a == b for a, b in pairs) / n) if n else None,
-        "kappa":         cohen_kappa(pairs),
+        "n": n,
+        "agreement": (sum(a == b for a, b in pairs) / n) if n else None,
+        "kappa": cohen_kappa(pairs),
         "disagreements": disagreements,
     }
 
 
 # ── files ───────────────────────────────────────────────────────
+
 
 def _results_dir() -> Path:
     return Path(config.get("eval", {}).get("results_dir", ".repopilot/evals"))
@@ -87,18 +87,18 @@ def _expected_facts(run: dict) -> dict[str, list[str]]:
 
 # ── interactive labelling ───────────────────────────────────────
 
+
 def _ask_yes_no(question: str) -> bool | None:
     """True / False, None to skip, raises StopIteration to quit."""
-    answer = Prompt.ask(f"{question} [y/n/s=skip/q=quit]", choices=["y", "n", "s", "q"],
-                        show_choices=False).lower()
+    answer = Prompt.ask(f"{question} [y/n/s=skip/q=quit]", choices=["y", "n", "s", "q"], show_choices=False).lower()
     if answer == "q":
         raise StopIteration
     return {"y": True, "n": False}.get(answer)
 
 
 def _label(run: dict, labels: dict, save) -> None:
-    facts   = _expected_facts(run)
-    todo    = [r for r in run["results"] if "error" not in r and r["id"] not in labels]
+    facts = _expected_facts(run)
+    todo = [r for r in run["results"] if "error" not in r and r["id"] not in labels]
     console.print(f"[dim]{len(todo)} answers to label (judge scores are hidden). q quits; progress is saved.[/dim]")
     for i, r in enumerate(todo, 1):
         console.rule(f"[bold]{i}/{len(todo)} · {r['id']}[/bold]")
@@ -122,17 +122,22 @@ def _report(run: dict, labels: dict) -> None:
     stats = {m: agreement(run["results"], labels, m) for m in ("faithfulness", "correctness")}
     for metric, s in stats.items():
         table.add_row(
-            metric.capitalize(), str(s["n"]),
+            metric.capitalize(),
+            str(s["n"]),
             "–" if s["agreement"] is None else f"{s['agreement']:.0%}",
             "–" if s["kappa"] is None else f"{s['kappa']:.2f}",
         )
     console.print(table)
-    console.print(f"[dim]Judge score ≥ {JUDGE_PASS} counts as yes. "
-                  "Kappa: >0.6 substantial, 0.4–0.6 moderate, <0.4 weak agreement.[/dim]")
+    console.print(
+        f"[dim]Judge score ≥ {JUDGE_PASS} counts as yes. "
+        "Kappa: >0.6 substantial, 0.4–0.6 moderate, <0.4 weak agreement.[/dim]"
+    )
     for metric, s in stats.items():
         for d in s["disagreements"]:
-            console.print(f"  [yellow]≠[/yellow] {d['id']} · {metric}: judge {d['judge']:.2f}, "
-                          f"you said {'yes' if d['human'] else 'no'}")
+            console.print(
+                f"  [yellow]≠[/yellow] {d['id']} · {metric}: judge {d['judge']:.2f}, "
+                f"you said {'yes' if d['human'] else 'no'}"
+            )
 
 
 def run_judge_check(run_file: str | None = None) -> None:

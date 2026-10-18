@@ -14,10 +14,9 @@ from redisvl.index import AsyncSearchIndex
 from redisvl.query import VectorQuery
 from redisvl.query.filter import Tag
 from redisvl.redis.utils import array_to_buffer
-
 from repopilot.config import config
-from repopilot.services.llm_service import get_embedder
 from repopilot.observability.logger import get_logger
+from repopilot.services.llm_service import get_embedder
 
 logger = get_logger(__name__)
 
@@ -62,9 +61,7 @@ class SemanticCache:
         self.client = Redis.from_url(redis_url)
         self.embedder = get_embedder()
         self.threshold = threshold
-        self.index = AsyncSearchIndex.from_dict(
-            _build_index_schema(dims), redis_client=self.client
-        )
+        self.index = AsyncSearchIndex.from_dict(_build_index_schema(dims), redis_client=self.client)
 
     async def setup(self) -> None:
         # overwrite=False: reuse the index if it already exists from a
@@ -157,9 +154,20 @@ def _ensure_wsl_redis(distro: str, redis_url: str, wait_seconds: float = 20) -> 
     logger.info(f"Starting Redis in WSL distro '{distro}'")
     try:
         subprocess.Popen(
-            ["wsl", "-d", distro, "-u", "root", "--", "bash", "-c",
-             "systemctl start redis-server; exec sleep infinity"],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            [
+                "wsl",
+                "-d",
+                distro,
+                "-u",
+                "root",
+                "--",
+                "bash",
+                "-c",
+                "systemctl start redis-server; exec sleep infinity",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
         )
     except OSError as e:

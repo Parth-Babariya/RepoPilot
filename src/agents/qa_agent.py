@@ -3,18 +3,17 @@ import re
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
-
 from repopilot.guardrails.budgets import agent_limits
+from repopilot.memory.conversation import get_summarization_middleware
+from repopilot.observability.logger import get_logger
+from repopilot.protocols.mcp_client import get_mcp_tools
+from repopilot.retrieval.symbol_index import symbols_enabled
 from repopilot.services.llm_service import fallback_middleware, get_llm
+from repopilot.skills.skill_tools import build_skills_prompt, get_registry, load_skill
 from repopilot.tools.code_search import search_codebase
 from repopilot.tools.repo_tools import read_lines, repo_map
-from repopilot.tools.symbol_tools import find_symbol, find_callers, find_callees
-from repopilot.retrieval.symbol_index import symbols_enabled
-from repopilot.observability.logger import get_logger
+from repopilot.tools.symbol_tools import find_callees, find_callers, find_symbol
 from repopilot.tools.terminal_tools import run_command
-from repopilot.protocols.mcp_client import get_mcp_tools
-from repopilot.skills.skill_tools import build_skills_prompt, get_registry, load_skill
-from repopilot.memory.conversation import get_summarization_middleware
 
 logger = get_logger(__name__)
 
@@ -42,8 +41,9 @@ Exact-name tools are precise; combine them with search_codebase when a question 
 SEARCH_RESULTS_MARKER = "[RepoPilot already searched the code for this question"
 
 # Questions that need the GitHub MCP tools (issues, PRs, commits on GitHub)
-_GITHUB_TOPIC = re.compile(r"github|\bissues?\b|pull request|\bPRs?\b|\bcommits?\b|\breleases?\b|\bbranch",
-                           re.IGNORECASE)
+_GITHUB_TOPIC = re.compile(
+    r"github|\bissues?\b|pull request|\bPRs?\b|\bcommits?\b|\breleases?\b|\bbranch", re.IGNORECASE
+)
 
 
 class GitHubToolsOnDemand(AgentMiddleware):
@@ -76,35 +76,38 @@ class GitHubToolsOnDemand(AgentMiddleware):
 
 
 async def build_agent(checkpointer):
-   """Create and return a LangChain agent with persistent memory."""
-   llm = get_llm()
-   mcp_tools = await get_mcp_tools()
+    """Create and return a LangChain agent with persistent memory."""
+    llm = get_llm()
+    mcp_tools = await get_mcp_tools()
 
-   full_prompt = SYSTEM_PROMPT + "\n\n" + REPO_TOOLS_PROMPT
-   # run_command stays for questions about history ("when did this change?" → git log);
-   # the safety policy lets read-only commands through and asks about anything else.
-   tools = [search_codebase, repo_map, read_lines, run_command, *mcp_tools]
+    full_prompt = SYSTEM_PROMPT + "\n\n" + REPO_TOOLS_PROMPT
+    # run_command stays for questions about history ("when did this change?" → git log);
+    # the safety policy lets read-only commands through and asks about anything else.
+    tools = [search_codebase, repo_map, read_lines, run_command, *mcp_tools]
 
-   if symbols_enabled():
-       full_prompt += "\n\n" + SYMBOL_TOOLS_PROMPT
-       tools += [find_symbol, find_callers, find_callees]
+    if symbols_enabled():
+        full_prompt += "\n\n" + SYMBOL_TOOLS_PROMPT
+        tools += [find_symbol, find_callers, find_callees]
 
-   # Skills: only the names/descriptions go in the prompt; the agent loads a
-   # skill's full instructions with load_skill when a question matches one.
-   if get_registry().skill_names:
-       full_prompt += "\n\n" + build_skills_prompt()
-       tools.append(load_skill)
+    # Skills: only the names/descriptions go in the prompt; the agent loads a
+    # skill's full instructions with load_skill when a question matches one.
+    if get_registry().skill_names:
+        full_prompt += "\n\n" + build_skills_prompt()
+        tools.append(load_skill)
 
-   return create_agent(
-       llm,
-       tools=tools,
-       system_prompt=full_prompt,
-       checkpointer=checkpointer,
-       # Summarise older messages once the conversation passes
-       # memory.summarize_at_tokens so long sessions don't overflow the context window.
-       # Then: a step limit and the /ask token budget, so a looping agent stops
-       # cleanly, and llm.fallback_model if the main model keeps failing.
-       middleware=[get_summarization_middleware(), *agent_limits("qa_tool_calls"), *fallback_middleware(),
-                   GitHubToolsOnDemand({t.name for t in mcp_tools
-                                        if (t.metadata or {}).get("mcp_server") == "github"})],
-   )
+    return create_agent(
+        llm,
+        tools=tools,
+        system_prompt=full_prompt,
+        checkpointer=checkpointer,
+        # Summarise older messages once the conversation passes
+        # memory.summarize_at_tokens so long sessions don't overflow the context window.
+        # Then: a step limit and the /ask token budget, so a looping agent stops
+        # cleanly, and llm.fallback_model if the main model keeps failing.
+        middleware=[
+            get_summarization_middleware(),
+            *agent_limits("qa_tool_calls"),
+            *fallback_middleware(),
+            GitHubToolsOnDemand({t.name for t in mcp_tools if (t.metadata or {}).get("mcp_server") == "github"}),
+        ],
+    )

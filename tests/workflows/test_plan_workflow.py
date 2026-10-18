@@ -3,10 +3,10 @@ import sys
 import types
 
 import pytest
-
 from repopilot.agents.planner_agent import PlannedTask, RevisedPlan
 from repopilot.agents.task_spec import TaskType
 from repopilot.workflows.task_store import SQLiteTaskStore
+
 from tests.workflows.test_task_store import make_plan, statuses
 
 
@@ -18,8 +18,8 @@ def orchestrator_module(monkeypatch):
     (The planner is imported for real; tests replace its replan() call.)
     """
     stubs = {
-        "repopilot.workflows.task_execution":           {"execute_task": None},
-        "repopilot.workflows.approval":           {"present_plan_for_approval": None},
+        "repopilot.workflows.task_execution": {"execute_task": None},
+        "repopilot.workflows.approval": {"present_plan_for_approval": None},
         "repopilot.retrieval.indexing.factory": {"get_indexer": None},
     }
     for name, attrs in stubs.items():
@@ -29,6 +29,7 @@ def orchestrator_module(monkeypatch):
     monkeypatch.delitem(sys.modules, "repopilot.workflows.plan_workflow", raising=False)
 
     import repopilot.workflows.plan_workflow as orchestrator
+
     return orchestrator
 
 
@@ -43,8 +44,16 @@ def run(orchestrator, store, pid, failing: set[str], max_replans: int = 0):
 
 
 def planned(task_id: str, deps: list[str]) -> PlannedTask:
-    return PlannedTask(id=task_id, title=task_id, description="", task_type=TaskType.IMPLEMENT,
-                       depends_on=deps, estimated_minutes=5, output_files=[], acceptance_criteria=[])
+    return PlannedTask(
+        id=task_id,
+        title=task_id,
+        description="",
+        task_type=TaskType.IMPLEMENT,
+        depends_on=deps,
+        estimated_minutes=5,
+        output_files=[],
+        acceptance_criteria=[],
+    )
 
 
 def test_successful_run_marks_project_completed(orchestrator_module, tmp_path):
@@ -79,13 +88,18 @@ def test_approved_replan_replaces_failed_branch_and_finishes(orchestrator_module
         return RevisedPlan(reason="split a", tasks=[planned("task_101", []), planned("task_102", ["task_101"])])
 
     orchestrator_module.replan = fake_replan
-    orchestrator_module.present_plan_for_approval = lambda plan, **kw: plan   # user approves
+    orchestrator_module.present_plan_for_approval = lambda plan, **kw: plan  # user approves
 
     run(orchestrator_module, store, pid, failing={"a"}, max_replans=1)
 
-    assert seen == {"failed": "a", "affected": ["b"]}          # only the failed branch is replaced
-    assert statuses(store, pid) == {"a": "replaced", "b": "replaced", "c": "completed",
-                                    "task_101": "completed", "task_102": "completed"}
+    assert seen == {"failed": "a", "affected": ["b"]}  # only the failed branch is replaced
+    assert statuses(store, pid) == {
+        "a": "replaced",
+        "b": "replaced",
+        "c": "completed",
+        "task_101": "completed",
+        "task_102": "completed",
+    }
     assert store.get_project(pid)["status"] == "completed"
 
 
@@ -94,7 +108,7 @@ def test_rejected_replan_falls_back_to_blocking(orchestrator_module, tmp_path):
     pid = store.create_project("goal", make_plan([("a", []), ("b", ["a"])]))
 
     orchestrator_module.replan = lambda *a, **kw: RevisedPlan(reason="r", tasks=[planned("task_101", [])])
-    orchestrator_module.present_plan_for_approval = lambda plan, **kw: None   # user rejects
+    orchestrator_module.present_plan_for_approval = lambda plan, **kw: None  # user rejects
 
     run(orchestrator_module, store, pid, failing={"a"}, max_replans=1)
 
@@ -134,7 +148,7 @@ def test_budget_pause_keeps_progress_without_using_retries(orchestrator_module, 
     async def agent_stopped_by_budget(task, dep_outputs=None):
         raise BudgetExceeded("used up")
 
-    checks = iter([None])                     # budget fine at the first check, used up afterwards
+    checks = iter([None])  # budget fine at the first check, used up afterwards
     monkeypatch.setattr(orchestrator_module, "budget_exhausted", lambda: next(checks, "used up"))
     orchestrator_module.execute_task = agent_stopped_by_budget
 
@@ -143,4 +157,4 @@ def test_budget_pause_keeps_progress_without_using_retries(orchestrator_module, 
     assert finished is False
     assert statuses(store, pid) == {"a": "pending", "b": "pending"}
     assert all(t["retry_count"] == 0 for t in store.get_all_tasks(pid))
-    assert store.get_latest_approved_project() == pid     # unfinished → the next /plan resumes it
+    assert store.get_latest_approved_project() == pid  # unfinished → the next /plan resumes it

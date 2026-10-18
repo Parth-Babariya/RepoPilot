@@ -1,10 +1,10 @@
 import os
-import chromadb
 
+import chromadb
 from repopilot.config import config
-from repopilot.retrieval.indexing.code_parser import CHUNKER_VERSION, parse_file, get_source_files
-from repopilot.services.llm_service import embedding_slug, get_embedder
 from repopilot.observability.logger import get_logger
+from repopilot.retrieval.indexing.code_parser import CHUNKER_VERSION, get_source_files, parse_file
+from repopilot.services.llm_service import embedding_slug, get_embedder
 
 logger = get_logger(__name__)
 
@@ -53,7 +53,7 @@ def _get_indexed_mtimes(collection: chromadb.Collection) -> dict[str, float]:
     mtimes: dict[str, float] = {}
     for meta in results["metadatas"]:
         source = meta.get("source", "")
-        mtime  = meta.get("mtime", 0.0) if meta.get("chunker") == CHUNKER_VERSION else 0.0
+        mtime = meta.get("mtime", 0.0) if meta.get("chunker") == CHUNKER_VERSION else 0.0
         if source:
             mtimes[source] = min(mtime, mtimes.get(source, mtime))
     return mtimes
@@ -93,28 +93,31 @@ def _embed_file(collection: chromadb.Collection, filepath: str, mtime: float) ->
     # doc_id is stable across re-runs for the same chunk — upsert is safe.
     # Chroma rejects duplicate ids in one call, so keep the last chunk per id
     # (two same-named blocks on one line, e.g. inline arrow functions).
-    by_id  = {f"{chunk.source}::{chunk.name}::{chunk.start_line}": chunk for chunk in chunks}
+    by_id = {f"{chunk.source}::{chunk.name}::{chunk.start_line}": chunk for chunk in chunks}
     chunks = list(by_id.values())
     if not chunks:
         return 0
 
     # One embedding request for the whole file instead of one per chunk.
-    contents   = [chunk.content for chunk in chunks]
+    contents = [chunk.content for chunk in chunks]
     embeddings = embedder.embed_documents(contents)
 
     collection.upsert(
         ids=list(by_id.keys()),
         embeddings=embeddings,
         documents=contents,
-        metadatas=[{
-            "source":     chunk.source,
-            "name":       chunk.name,
-            "type":       chunk.type,
-            "start_line": chunk.start_line,
-            "end_line":   chunk.end_line,
-            "mtime":      mtime,   # stored so next run can skip this file if unchanged
-            "chunker":    CHUNKER_VERSION,
-        } for chunk in chunks]
+        metadatas=[
+            {
+                "source": chunk.source,
+                "name": chunk.name,
+                "type": chunk.type,
+                "start_line": chunk.start_line,
+                "end_line": chunk.end_line,
+                "mtime": mtime,  # stored so next run can skip this file if unchanged
+                "chunker": CHUNKER_VERSION,
+            }
+            for chunk in chunks
+        ],
     )
     return len(chunks)
 
@@ -122,6 +125,7 @@ def _embed_file(collection: chromadb.Collection, filepath: str, mtime: float) ->
 # ------------------------------------------------------------------
 # Public API used by watcher.py (per-file, real-time)
 # ------------------------------------------------------------------
+
 
 def index_single_file(filepath: str) -> None:
     """
@@ -135,7 +139,7 @@ def index_single_file(filepath: str) -> None:
         # File may have been deleted between the event firing and this call
         return
     collection = _get_collection()
-    mtime      = os.path.getmtime(filepath)
+    mtime = os.path.getmtime(filepath)
     _delete_file_chunks(collection, filepath)
     n = _embed_file(collection, filepath, mtime)
     logger.info(f"Watchdog indexed {filepath} → {n} chunks")
@@ -155,6 +159,7 @@ def remove_file_from_index(filepath: str) -> None:
 # Public API used by main.py (full scan, startup + /reindex + post-/plan)
 # ------------------------------------------------------------------
 
+
 def index_codebase(repo_path: str) -> chromadb.Collection:
     """
     Incrementally index all source files in repo_path into ChromaDB.
@@ -167,9 +172,9 @@ def index_codebase(repo_path: str) -> chromadb.Collection:
     Safe to call repeatedly — startup, after /plan completes, or via
     /reindex. Fast after the first run because unchanged files are skipped.
     """
-    collection     = _get_collection()
+    collection = _get_collection()
     # {filepath: current mtime on disk}
-    current_files  = {f: os.path.getmtime(f) for f in get_source_files(repo_path)}
+    current_files = {f: os.path.getmtime(f) for f in get_source_files(repo_path)}
     # {filepath: mtime when last indexed into ChromaDB}
     indexed_mtimes = _get_indexed_mtimes(collection)
 
@@ -207,16 +212,15 @@ def index_codebase(repo_path: str) -> chromadb.Collection:
 def show_index(collection: chromadb.Collection) -> None:
     """Display all documents stored in the ChromaDB collection."""
     from rich.console import Console
+
     console = Console()
     results = collection.get(include=["documents", "metadatas", "embeddings"])
     console.print(f"\n[bold]Semantic Index — {collection.count()} chunks[/bold]\n")
 
-    for i, (doc, meta, emb) in enumerate(zip(
-        results["documents"],
-        results["metadatas"],
-        results["embeddings"]
-    )):
-        console.print(f"[bold cyan]── Chunk {i+1} ──────────────────────────[/bold cyan]")
+    for i, (doc, meta, emb) in enumerate(
+        zip(results["documents"], results["metadatas"], results["embeddings"], strict=False)
+    ):
+        console.print(f"[bold cyan]── Chunk {i + 1} ──────────────────────────[/bold cyan]")
         console.print(f"  File     : {meta['source']}")
         console.print(f"  Name     : {meta['name']} ({meta['type']})")
         console.print(f"  Lines    : {meta['start_line']} - {meta['end_line']}")

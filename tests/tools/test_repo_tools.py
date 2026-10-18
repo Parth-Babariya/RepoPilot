@@ -1,5 +1,4 @@
 import pytest
-
 from repopilot.tools.repo_tools import read_lines
 
 

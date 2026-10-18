@@ -3,8 +3,16 @@ from repopilot.agents.task_spec import TaskType
 
 
 def planned(task_id, deps):
-    return PlannedTask(id=task_id, title=task_id, description="", task_type=TaskType.IMPLEMENT,
-                       depends_on=deps, estimated_minutes=5, output_files=[], acceptance_criteria=[])
+    return PlannedTask(
+        id=task_id,
+        title=task_id,
+        description="",
+        task_type=TaskType.IMPLEMENT,
+        depends_on=deps,
+        estimated_minutes=5,
+        output_files=[],
+        acceptance_criteria=[],
+    )
 
 
 def test_next_task_id_starts_a_new_hundred():
@@ -14,7 +22,7 @@ def test_next_task_id_starts_a_new_hundred():
 
 def test_validate_revision():
     existing = {"task_001", "task_002", "task_003"}
-    dependable = {"task_001"}                       # completed; 002 failed, 003 is being replaced
+    dependable = {"task_001"}  # completed; 002 failed, 003 is being replaced
 
     good = RevisedPlan(reason="r", tasks=[planned("task_101", ["task_001"]), planned("task_102", ["task_101"])])
     assert validate_revision(good, dependable, existing) == []

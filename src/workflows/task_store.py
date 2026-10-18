@@ -27,14 +27,13 @@ class TaskStatus(str, Enum):
     Dropping a task is done through an approved re-plan (it becomes REPLACED),
     so the reason is always recorded and its dependents are re-planned too.
     """
-    PENDING     = "pending"
+
+    PENDING = "pending"
     IN_PROGRESS = "in_progress"
-    COMPLETED   = "completed"
-    FAILED      = "failed"
-    BLOCKED     = "blocked"
-    REPLACED    = "replaced"   # superseded by tasks from an approved re-plan
-
-
+    COMPLETED = "completed"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+    REPLACED = "replaced"  # superseded by tasks from an approved re-plan
 
 
 _PROJECTS_TABLE = """
@@ -158,9 +157,8 @@ class SQLiteTaskStore:
         project_id = str(uuid.uuid4())
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO projects(id, name, goal, plan_json, status, approved_at) "
-                "VALUES (?,?,?,?,?, unixepoch())",
-                (project_id, plan.project_name, goal, plan.model_dump_json(), "approved")
+                "INSERT INTO projects(id, name, goal, plan_json, status, approved_at) VALUES (?,?,?,?,?, unixepoch())",
+                (project_id, plan.project_name, goal, plan.model_dump_json(), "approved"),
             )
             self._insert_tasks(conn, project_id, plan.tasks, first_order=0)
         logger.info(f"Project {project_id} created with {len(plan.tasks)} tasks")
@@ -175,14 +173,17 @@ class SQLiteTaskStore:
                     output_files, acceptance_criteria, verify_command, execution_order)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    pt.id, project_id, pt.title, pt.description,
+                    pt.id,
+                    project_id,
+                    pt.title,
+                    pt.description,
                     pt.task_type.value,
                     json.dumps(pt.depends_on),
                     json.dumps(pt.output_files),
                     json.dumps(pt.acceptance_criteria),
                     (getattr(pt, "verify_command", None) or "").strip() or None,
                     first_order + i,
-                )
+                ),
             )
 
     def apply_replan(self, project_id: str, replaced_ids: list[str], new_tasks, reason: str) -> None:
@@ -217,16 +218,12 @@ class SQLiteTaskStore:
     def get_latest_project(self) -> str | None:
         """Return the most recent project_id regardless of status (used by /task_status)."""
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT id FROM projects ORDER BY created_at DESC, rowid DESC LIMIT 1"
-            ).fetchone()
+            row = conn.execute("SELECT id FROM projects ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
         return row["id"] if row else None
 
     def get_project(self, project_id: str) -> dict | None:
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT id, name, goal, status FROM projects WHERE id=?", (project_id,)
-            ).fetchone()
+            row = conn.execute("SELECT id, name, goal, status FROM projects WHERE id=?", (project_id,)).fetchone()
         return dict(row) if row else None
 
     def finish_project(self, project_id: str, status: str) -> None:
@@ -250,7 +247,7 @@ class SQLiteTaskStore:
                    SET status     = 'in_progress',
                        started_at = unixepoch()
                    WHERE project_id = ? AND id = ? AND status = 'pending'""",
-                (project_id, task_id)
+                (project_id, task_id),
             )
         return cur.rowcount == 1
 
@@ -262,7 +259,7 @@ class SQLiteTaskStore:
                        result       = ?,
                        completed_at = unixepoch()
                    WHERE project_id = ? AND id = ?""",
-                (result, project_id, task_id)
+                (result, project_id, task_id),
             )
         logger.info(f"Task {task_id} completed")
 
@@ -282,7 +279,7 @@ class SQLiteTaskStore:
                        END,
                        started_at  = NULL
                    WHERE project_id = ? AND id = ?""",
-                (error, project_id, task_id)
+                (error, project_id, task_id),
             )
         logger.info(f"Task {task_id} failed: {error[:80]}")
 
@@ -295,14 +292,13 @@ class SQLiteTaskStore:
             conn.execute(
                 """UPDATE tasks SET status = 'pending', started_at = NULL
                    WHERE project_id = ? AND id = ? AND status = 'in_progress'""",
-                (project_id, task_id)
+                (project_id, task_id),
             )
 
     def block_task(self, project_id: str, task_id: str, reason: str) -> None:
         with self._conn() as conn:
             conn.execute(
-                "UPDATE tasks SET status='blocked', error=? WHERE project_id=? AND id=?",
-                (reason, project_id, task_id)
+                "UPDATE tasks SET status='blocked', error=? WHERE project_id=? AND id=?", (reason, project_id, task_id)
             )
 
     def block_unreachable_tasks(self, project_id: str) -> int:
@@ -313,9 +309,9 @@ class SQLiteTaskStore:
         """
         blocked_total = 0
         while True:
-            tasks  = self.get_all_tasks(project_id)
-            dead   = {t["id"] for t in tasks if t["status"] in ("failed", "blocked")}
-            newly  = []
+            tasks = self.get_all_tasks(project_id)
+            dead = {t["id"] for t in tasks if t["status"] in ("failed", "blocked")}
+            newly = []
             for t in tasks:
                 if t["status"] != "pending":
                     continue
@@ -333,7 +329,7 @@ class SQLiteTaskStore:
     # Queries
     # ------------------------------------------------------------------
 
-    # get ready tasks - get tasks that are in pending state and 
+    # get ready tasks - get tasks that are in pending state and
     # their dependents are all done
     def get_ready_tasks(self, project_id: str) -> list[dict]:
         """Return PENDING tasks whose every dependency is COMPLETED."""
@@ -342,7 +338,7 @@ class SQLiteTaskStore:
                 """SELECT * FROM tasks
                    WHERE project_id = ? AND status = 'pending'
                    ORDER BY execution_order""",
-                (project_id,)
+                (project_id,),
             ).fetchall()
 
         # list of pending tasks
@@ -366,7 +362,7 @@ class SQLiteTaskStore:
                 f"""SELECT COUNT(*) FROM tasks
                     WHERE project_id = ? AND id IN ({placeholders})
                       AND status = 'completed'""",
-                [project_id, *dep_ids]
+                [project_id, *dep_ids],
             ).fetchone()
         # every dependency must exist and be done — a missing id never counts as done
         return row[0] == len(dep_ids)
@@ -374,16 +370,14 @@ class SQLiteTaskStore:
     def get_all_tasks(self, project_id: str) -> list[dict]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM tasks WHERE project_id=? ORDER BY execution_order",
-                (project_id,)
+                "SELECT * FROM tasks WHERE project_id=? ORDER BY execution_order", (project_id,)
             ).fetchall()
         return [dict(r) for r in rows]
 
     def get_progress(self, project_id: str) -> dict[str, int]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT status, COUNT(*) as n FROM tasks WHERE project_id=? GROUP BY status",
-                (project_id,)
+                "SELECT status, COUNT(*) as n FROM tasks WHERE project_id=? GROUP BY status", (project_id,)
             ).fetchall()
         return {r["status"]: r["n"] for r in rows}
 

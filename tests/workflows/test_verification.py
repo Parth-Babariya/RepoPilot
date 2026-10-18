@@ -2,7 +2,6 @@ import json
 import sys
 
 import pytest
-
 from repopilot.guardrails import tool_safety as safety
 from repopilot.workflows.verification import verify_task
 
@@ -15,9 +14,18 @@ def in_project(tmp_path, monkeypatch):
 
 
 def task(**overrides) -> dict:
-    base = {"id": "task_001", "title": "T", "description": "Do it", "task_type": "implement",
-            "output_files": "[]", "acceptance_criteria": "[]", "verify_command": None,
-            "retry_count": 0, "max_retries": 3, "error": None}
+    base = {
+        "id": "task_001",
+        "title": "T",
+        "description": "Do it",
+        "task_type": "implement",
+        "output_files": "[]",
+        "acceptance_criteria": "[]",
+        "verify_command": None,
+        "retry_count": 0,
+        "max_retries": 3,
+        "error": None,
+    }
     return base | overrides
 
 
@@ -42,8 +50,12 @@ def test_verify_command_decides(in_project):
     (in_project / "app.py").write_text("print('ok')\n")
     files = json.dumps(["app.py"])
     passing = verify_task(task(output_files=files, verify_command=f'"{sys.executable}" -c "print(1)"'))
-    failing = verify_task(task(output_files=files,
-                               verify_command=f'"{sys.executable}" -c "import sys; print(\'tests failed\'); sys.exit(1)"'))
+    failing = verify_task(
+        task(
+            output_files=files,
+            verify_command=f'"{sys.executable}" -c "import sys; print(\'tests failed\'); sys.exit(1)"',
+        )
+    )
 
     assert passing.passed and "✓ all 1 output files exist" in passing.report
     assert not failing.passed and "exited 1" in failing.report and "tests failed" in failing.report

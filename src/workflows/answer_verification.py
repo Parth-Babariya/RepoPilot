@@ -26,8 +26,10 @@ logger = get_logger(__name__)
 # caller (ask_workflow) gives the agent one chance to revise.
 # ------------------------------------------------------------------
 
-_EXTENSIONS = ("py|pyi|js|jsx|ts|tsx|mjs|cjs|java|kt|go|rs|rb|php|c|h|cc|cpp|hpp|cs|swift|scala|"
-               "sh|sql|html|css|vue|md|yaml|yml|toml|json|ini|cfg")
+_EXTENSIONS = (
+    "py|pyi|js|jsx|ts|tsx|mjs|cjs|java|kt|go|rs|rb|php|c|h|cc|cpp|hpp|cs|swift|scala|"
+    "sh|sql|html|css|vue|md|yaml|yml|toml|json|ini|cfg"
+)
 # path.ext, then optionally ":12", ":12-30", " (lines 12-30)", " line 12"
 _CITATION = re.compile(
     rf"(?<![\w./-])((?:[\w.-]+/)*[\w-][\w.-]*\.(?:{_EXTENSIONS}))\b"
@@ -42,15 +44,15 @@ _MAX_FILES_SCANNED = 20000
 @dataclass
 class CitationReport:
     checked: int = 0
-    problems: list[str] = field(default_factory=list)       # objectively wrong: missing files, lines past the end
+    problems: list[str] = field(default_factory=list)  # objectively wrong: missing files, lines past the end
     unknown_names: list[str] = field(default_factory=list)  # code names not found in the retrieved code
 
 
 @dataclass
 class AnswerCheck:
     passed: bool
-    summary: str                                            # one line shown under the answer
-    feedback: list[str] = field(default_factory=list)       # what the agent must fix on a revision
+    summary: str  # one line shown under the answer
+    feedback: list[str] = field(default_factory=list)  # what the agent must fix on a revision
 
 
 def _looks_like_code(name: str) -> bool:
@@ -100,8 +102,7 @@ def check_citations(answer: str, sources: list[Source], evidence: list[str]) -> 
         report.checked += 1
 
         candidates = [root / cited] if (root / cited).is_file() else []
-        candidates = candidates or [Path(s.path) for s in sources
-                                    if Path(s.path).as_posix().endswith(cited)][:1]
+        candidates = candidates or [Path(s.path) for s in sources if Path(s.path).as_posix().endswith(cited)][:1]
         candidates = candidates or repo_files.matching(cited)
         if not candidates:
             # Only a real citation — a path or line numbers — must exist. A bare name can be
@@ -132,9 +133,9 @@ def check_citations(answer: str, sources: list[Source], evidence: list[str]) -> 
 def _settings() -> dict:
     cfg = config.get("ask", {}) or {}
     return {
-        "verify":          bool(cfg.get("verify", True)),
+        "verify": bool(cfg.get("verify", True)),
         "verify_with_llm": bool(cfg.get("verify_with_llm", True)),
-        "max_revisions":   int(cfg.get("max_revisions", 1)),
+        "max_revisions": int(cfg.get("max_revisions", 1)),
     }
 
 
@@ -149,8 +150,9 @@ async def verify_answer(question: str, answer: str, sources: list[Source], evide
         return None
 
     report = check_citations(answer, sources, evidence)
-    logger.info(f"Citation check: {report.checked} checked, problems={report.problems}, "
-                f"unknown names={report.unknown_names}")
+    logger.info(
+        f"Citation check: {report.checked} checked, problems={report.problems}, unknown names={report.unknown_names}"
+    )
     if report.problems:
         return AnswerCheck(False, "; ".join(report.problems), report.problems)
 
@@ -166,8 +168,9 @@ async def verify_answer(question: str, answer: str, sources: list[Source], evide
         # The check is a safety net — if it fails, show the answer rather than nothing.
         logger.warning(f"Answer critic failed: {e}")
         return AnswerCheck(True, f"{refs} · claims not checked (the answer critic failed)")
-    logger.info(f"Answer critic: grounded={verdict.grounded}, reason={verdict.reason}, "
-                f"unsupported={verdict.unsupported_claims}")
+    logger.info(
+        f"Answer critic: grounded={verdict.grounded}, reason={verdict.reason}, unsupported={verdict.unsupported_claims}"
+    )
     if verdict.grounded:
         return AnswerCheck(True, f"{refs} · claims supported by the retrieved code")
     claims = verdict.unsupported_claims or [verdict.reason]

@@ -1,5 +1,4 @@
 from langchain.tools import tool
-
 from repopilot.guardrails.tool_safety import check_path, resolve_path
 from repopilot.observability.logger import get_logger
 from repopilot.retrieval.repo_map import build_repo_map

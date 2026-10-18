@@ -1,11 +1,16 @@
 import pytest
 from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
-
 from repopilot.guardrails import budgets
 from repopilot.guardrails.budgets import (
-    BudgetExceeded, TokenBudgetMiddleware, agent_limits, budget_exhausted, ensure_budget, token_budget,
+    BudgetExceeded,
+    TokenBudgetMiddleware,
+    agent_limits,
+    budget_exhausted,
+    ensure_budget,
+    token_budget,
 )
 from repopilot.observability.usage import UsageCallback, run_tokens
+
 from tests.observability.test_usage import fake_llm_end, store  # noqa: F401  (store is a fixture)
 
 
@@ -13,12 +18,13 @@ from tests.observability.test_usage import fake_llm_end, store  # noqa: F401  (s
 def limits(monkeypatch):
     def set_limits(**values):
         monkeypatch.setitem(budgets.config, "budgets", values)
+
     return set_limits
 
 
 def test_token_budget_counts_every_llm_call_inside_it(store, limits):
     limits(ask_tokens=1000)
-    assert run_tokens() is None                       # nothing is counted outside a budget
+    assert run_tokens() is None  # nothing is counted outside a budget
     with token_budget("ask_tokens"):
         fake_llm_end(UsageCallback("gpt-4o-mini"), 300, 100)
         assert run_tokens() == 400 and budget_exhausted() is None
@@ -26,7 +32,7 @@ def test_token_budget_counts_every_llm_call_inside_it(store, limits):
         assert "1,000 of 1,000" in budget_exhausted()
         with pytest.raises(BudgetExceeded):
             ensure_budget()
-    assert budget_exhausted() is None                 # the limit ends with the block
+    assert budget_exhausted() is None  # the limit ends with the block
 
 
 def test_zero_means_unlimited(store, limits):

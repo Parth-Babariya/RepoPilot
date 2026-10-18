@@ -6,9 +6,9 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from repopilot.agents.task_spec import json_list
 from repopilot.config import config
 from repopilot.guardrails.tool_safety import check_path, resolve_path, run_guarded
-from repopilot.agents.task_spec import json_list
 
 # ------------------------------------------------------------------
 # Verification — objective checks the agent can't talk its way past
@@ -21,7 +21,7 @@ from repopilot.agents.task_spec import json_list
 # fed back to the agent. On success the report is evidence for the critic.
 # ------------------------------------------------------------------
 
-_OUTPUT_TAIL_CHARS = 1500   # tail of verify_command output kept in the report
+_OUTPUT_TAIL_CHARS = 1500  # tail of verify_command output kept in the report
 
 
 @dataclass
@@ -34,7 +34,7 @@ def _syntax_error(path: Path) -> str | None:
     suffix = path.suffix.lower()
     try:
         if suffix == ".py":
-            compile(path.read_text(encoding="utf-8"), str(path), "exec")   # no .pyc written
+            compile(path.read_text(encoding="utf-8"), str(path), "exec")  # no .pyc written
         elif suffix == ".json":
             json.loads(path.read_text(encoding="utf-8"))
         elif suffix in (".js", ".mjs", ".cjs") and shutil.which("node"):
@@ -71,6 +71,8 @@ def verify_task(task: dict) -> Verification:
         ok = code == 0
         passed = passed and ok
         tail = output[-_OUTPUT_TAIL_CHARS:]
-        lines.append(f"{'✓' if ok else '✗'} `{command}` exited {code if code is not None else 'without running'}\n{tail}")
+        lines.append(
+            f"{'✓' if ok else '✗'} `{command}` exited {code if code is not None else 'without running'}\n{tail}"
+        )
 
     return Verification(passed, "\n".join(lines) or "(no checks configured for this task)")

@@ -6,11 +6,10 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from tree_sitter_languages import get_parser
-
 from repopilot.config import config
-from repopilot.retrieval.indexing.code_parser import EXTENSION_TO_LANGUAGE, get_source_files
 from repopilot.observability.logger import get_logger
+from repopilot.retrieval.indexing.code_parser import EXTENSION_TO_LANGUAGE, get_source_files
+from tree_sitter_languages import get_parser
 
 logger = get_logger(__name__)
 
@@ -38,41 +37,59 @@ logger = get_logger(__name__)
 # Nodes that define a named symbol. Superset of code_parser.BLOCK_NODE_TYPES:
 # also catches structs/impls/traits so methods get a qualified parent name.
 _SYMBOL_NODE_TYPES = {
-    "function_definition", "function_declaration", "method_definition", "arrow_function",
-    "class_definition", "class_declaration", "method_declaration", "constructor_declaration",
-    "interface_declaration", "enum_declaration", "function_item", "struct_item", "impl_item",
-    "trait_item", "enum_item", "class_specifier", "struct_specifier", "module", "class",
-    "method", "singleton_method",
+    "function_definition",
+    "function_declaration",
+    "method_definition",
+    "arrow_function",
+    "class_definition",
+    "class_declaration",
+    "method_declaration",
+    "constructor_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "function_item",
+    "struct_item",
+    "impl_item",
+    "trait_item",
+    "enum_item",
+    "class_specifier",
+    "struct_specifier",
+    "module",
+    "class",
+    "method",
+    "singleton_method",
 }
 _CONTAINER_WORDS = ("class", "struct", "impl", "trait", "interface", "enum", "module")
 
 # Nodes that are a call, across the bundled grammars.
 _CALL_NODE_TYPES = {
-    "call",                       # python, ruby
-    "call_expression",            # js/ts, go, rust, c/c++, swift, kotlin
-    "new_expression",             # js/ts
-    "method_invocation",          # java
-    "object_creation_expression", # java, c#
-    "invocation_expression",      # c#
-    "function_call_expression", "member_call_expression", "scoped_call_expression",  # php
+    "call",  # python, ruby
+    "call_expression",  # js/ts, go, rust, c/c++, swift, kotlin
+    "new_expression",  # js/ts
+    "method_invocation",  # java
+    "object_creation_expression",  # java, c#
+    "invocation_expression",  # c#
+    "function_call_expression",
+    "member_call_expression",
+    "scoped_call_expression",  # php
 }
 _CALLEE_FIELDS = ("function", "name", "method", "constructor", "type")
-_IDENTIFIER    = re.compile(r"[A-Za-z_$][\w$]*")
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
 
 
 @dataclass
 class Symbol:
     name: str
     qualname: str
-    kind: str          # "class" | "function"
+    kind: str  # "class" | "function"
     start_line: int
     end_line: int
 
 
 @dataclass
 class Call:
-    caller: str        # qualname of the enclosing symbol, or "<module>"
-    callee: str        # bare name being called
+    caller: str  # qualname of the enclosing symbol, or "<module>"
+    callee: str  # bare name being called
     line: int
 
 
@@ -80,8 +97,9 @@ class Call:
 # Extraction
 # ------------------------------------------------------------------
 
+
 def _text(node, source: bytes) -> str:
-    return source[node.start_byte:node.end_byte].decode("utf-8", errors="ignore")
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="ignore")
 
 
 def _symbol_name(node, source: bytes) -> str | None:
@@ -120,10 +138,10 @@ def _callee_name(node, source: bytes) -> str | None:
 
 def extract(source_text: str, language: str) -> tuple[list[Symbol], list[Call]]:
     """Parse source and return every symbol definition and call site in it."""
-    source  = source_text.encode("utf-8")
-    tree    = get_parser(language).parse(source)
+    source = source_text.encode("utf-8")
+    tree = get_parser(language).parse(source)
     symbols: list[Symbol] = []
-    calls:   list[Call]   = []
+    calls: list[Call] = []
 
     # Iterative walk carrying the enclosing qualified name — avoids recursion
     # limits on deeply nested files.
@@ -154,6 +172,7 @@ def extract(source_text: str, language: str) -> tuple[list[Symbol], list[Call]]:
 # ------------------------------------------------------------------
 # Storage
 # ------------------------------------------------------------------
+
 
 class SymbolStore:
     def __init__(self, db_path: str) -> None:
@@ -199,7 +218,7 @@ class SymbolStore:
         if language is None or not os.path.exists(filepath):
             self.remove_file(filepath)
             return 0
-        mtime  = os.path.getmtime(filepath)
+        mtime = os.path.getmtime(filepath)
         source = Path(filepath).read_text(encoding="utf-8", errors="ignore")
         try:
             symbols, calls = extract(source, language)
@@ -251,12 +270,17 @@ class SymbolStore:
                    ORDER BY file, line""",
                 (name, name, name),
             ).fetchall()
-            defined = {
-                r["name"] for r in conn.execute(
-                    f"SELECT DISTINCT name FROM symbols WHERE name IN ({','.join('?' * len(rows))})",
-                    [r["callee"] for r in rows],
-                )
-            } if rows else set()
+            defined = (
+                {
+                    r["name"]
+                    for r in conn.execute(
+                        f"SELECT DISTINCT name FROM symbols WHERE name IN ({','.join('?' * len(rows))})",
+                        [r["callee"] for r in rows],
+                    )
+                }
+                if rows
+                else set()
+            )
         return [dict(r) | {"in_repo": r["callee"] in defined} for r in rows]
 
     def stats(self) -> dict:
@@ -285,12 +309,12 @@ def get_symbol_store() -> SymbolStore:
 # Indexing entry points (wired in via retrieval/indexing/factory.py)
 # ------------------------------------------------------------------
 
+
 def update_symbol_index(repo_path: str) -> None:
     """Incrementally sync the symbol index with repo_path (new/changed/deleted files)."""
-    store   = get_symbol_store()
+    store = get_symbol_store()
     current = {
-        f: os.path.getmtime(f) for f in get_source_files(repo_path)
-        if Path(f).suffix.lower() in EXTENSION_TO_LANGUAGE
+        f: os.path.getmtime(f) for f in get_source_files(repo_path) if Path(f).suffix.lower() in EXTENSION_TO_LANGUAGE
     }
     indexed = store.indexed_mtimes()
 

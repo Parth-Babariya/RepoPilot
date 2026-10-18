@@ -52,7 +52,7 @@ def test_module_level_code_is_indexed(tmp_path):
     path.write_text(source, encoding="utf-8")
 
     module = [c for c in parse_file(str(path)) if c.type == "module"]
-    assert len(module) == 1                                   # the divider and decorator are skipped
+    assert len(module) == 1  # the divider and decorator are skipped
     assert module[0].name == "_ALWAYS_DENIED, TIMEOUT"
     assert "_ALWAYS_DENIED" in module[0].content and "always refused" in module[0].content
     assert (module[0].start_line, module[0].end_line) == (1, 7)
@@ -69,7 +69,7 @@ def test_eval_answers_and_build_metadata_are_not_indexed(tmp_path, monkeypatch):
     from repopilot.config import config
     from repopilot.retrieval.indexing.code_parser import get_source_files
 
-    questions = tmp_path / config["eval"]["questions_file"]      # wherever config says the eval set is
+    questions = tmp_path / config["eval"]["questions_file"]  # wherever config says the eval set is
     questions.parent.mkdir(parents=True)
     questions.write_text("- question: q\n")
     (tmp_path / "pkg.egg-info").mkdir()
@@ -77,6 +77,6 @@ def test_eval_answers_and_build_metadata_are_not_indexed(tmp_path, monkeypatch):
     (tmp_path / "app.py").write_text("x = 1\n")
 
     monkeypatch.chdir(tmp_path)
-    for root in (".", str(tmp_path)):          # relative and absolute roots behave the same
+    for root in (".", str(tmp_path)):  # relative and absolute roots behave the same
         files = {p.replace("\\", "/").rsplit("/", 1)[-1] for p in get_source_files(root)}
         assert files == {"app.py"}

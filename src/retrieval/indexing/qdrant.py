@@ -6,12 +6,10 @@ from pathlib import Path
 from langchain_core.documents import Document
 from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient, models
-
 from repopilot.config import config
-from repopilot.retrieval.indexing.code_parser import CHUNKER_VERSION, parse_file, get_source_files
-from repopilot.services.llm_service import embedding_slug, get_embedder
 from repopilot.observability.logger import get_logger
-
+from repopilot.retrieval.indexing.code_parser import CHUNKER_VERSION, get_source_files, parse_file
+from repopilot.services.llm_service import embedding_slug, get_embedder
 
 logger = get_logger(__name__)
 
@@ -30,7 +28,7 @@ logger = get_logger(__name__)
 # ------------------------------------------------------------------
 
 _BATCH_SIZE = 50
-_SPARSE_VECTOR = "langchain-sparse"   # langchain_qdrant's default sparse vector name
+_SPARSE_VECTOR = "langchain-sparse"  # langchain_qdrant's default sparse vector name
 
 
 def connection() -> dict:
@@ -84,9 +82,7 @@ def _ensure_layout(client: QdrantClient, name: str) -> bool:
 
 
 def _source_filter(filepath: str) -> models.Filter:
-    return models.Filter(must=[
-        models.FieldCondition(key="metadata.source", match=models.MatchValue(value=filepath))
-    ])
+    return models.Filter(must=[models.FieldCondition(key="metadata.source", match=models.MatchValue(value=filepath))])
 
 
 def _get_indexed_mtimes(client: QdrantClient, name: str) -> dict[str, float]:
@@ -98,12 +94,16 @@ def _get_indexed_mtimes(client: QdrantClient, name: str) -> dict[str, float]:
     offset = None
     while True:
         points, offset = client.scroll(
-            collection_name=name, with_payload=["metadata"], with_vectors=False, limit=256, offset=offset,
+            collection_name=name,
+            with_payload=["metadata"],
+            with_vectors=False,
+            limit=256,
+            offset=offset,
         )
         for point in points:
-            meta   = (point.payload or {}).get("metadata", {})
+            meta = (point.payload or {}).get("metadata", {})
             source = meta.get("source", "")
-            mtime  = meta.get("mtime", 0.0) if meta.get("chunker") == CHUNKER_VERSION else 0.0
+            mtime = meta.get("mtime", 0.0) if meta.get("chunker") == CHUNKER_VERSION else 0.0
             if source:
                 mtimes[source] = min(mtime, mtimes.get(source, mtime))
         if offset is None:
@@ -125,13 +125,13 @@ def _file_documents(filepath: str, mtime: float) -> list[Document]:
         Document(
             page_content=chunk.content,
             metadata={
-                "source":     chunk.source,
-                "name":       chunk.name,
-                "type":       chunk.type,
+                "source": chunk.source,
+                "name": chunk.name,
+                "type": chunk.type,
                 "start_line": chunk.start_line,
-                "end_line":   chunk.end_line,
-                "mtime":      mtime,
-                "chunker":    CHUNKER_VERSION,
+                "end_line": chunk.end_line,
+                "mtime": mtime,
+                "chunker": CHUNKER_VERSION,
             },
         )
         for chunk in chunks
@@ -144,7 +144,8 @@ def _add_documents(client: QdrantClient, docs: list[Document]) -> QdrantVectorSt
         if not docs:
             return None
         return QdrantVectorStore.from_documents(
-            docs, get_embedder(),
+            docs,
+            get_embedder(),
             sparse_embedding=sparse_embedding(),
             retrieval_mode=RetrievalMode.HYBRID,
             collection_name=collection_name(),
@@ -165,20 +166,20 @@ def index_codebase(repo_path: str) -> QdrantVectorStore | None:
       unchanged files     → skipped
     Returns None only when the repo has no indexable files and no collection exists.
     """
-    name    = collection_name()
-    client  = QdrantClient(**connection())
-    exists  = _ensure_layout(client, name)
+    name = collection_name()
+    client = QdrantClient(**connection())
+    exists = _ensure_layout(client, name)
 
     current = {f: os.path.getmtime(f) for f in get_source_files(repo_path)}
     indexed = _get_indexed_mtimes(client, name) if exists else {}
 
-    deleted  = set(indexed) - set(current)
+    deleted = set(indexed) - set(current)
     to_embed = [f for f, mtime in current.items() if indexed.get(f) != mtime]
 
     for filepath in deleted | (set(to_embed) & set(indexed)):
         _delete_file_points(client, name, filepath)
 
-    docs  = [doc for f in to_embed for doc in _file_documents(f, current[f])]
+    docs = [doc for f in to_embed for doc in _file_documents(f, current[f])]
     store = _add_documents(client, docs)
 
     changed = len(set(to_embed) & set(indexed))
@@ -214,12 +215,14 @@ def remove_file_from_index(filepath: str) -> None:
 def show_index(store: QdrantVectorStore | None) -> None:
     """Display all chunks stored in the Qdrant collection (/show_index)."""
     from rich.console import Console
+
     console = Console()
     if store is None:
         console.print("[yellow]The index is empty.[/yellow]")
         return
-    points, _ = store.client.scroll(collection_name=collection_name(), with_payload=True,
-                                    with_vectors=False, limit=1000)
+    points, _ = store.client.scroll(
+        collection_name=collection_name(), with_payload=True, with_vectors=False, limit=1000
+    )
     console.print(f"\n[bold]Qdrant index — {len(points)} chunks[/bold]\n")
     for i, point in enumerate(points, 1):
         content = point.payload.get("page_content", "")

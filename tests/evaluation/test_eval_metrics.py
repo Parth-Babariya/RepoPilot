@@ -1,16 +1,21 @@
 from pathlib import Path
 
 import pytest
-
 from repopilot.evaluation.metrics import (
-    context_recall, fact_recall, file_matches, load_questions, mean, reciprocal_rank, retrieval_rank,
+    context_recall,
+    fact_recall,
+    file_matches,
+    load_questions,
+    mean,
+    reciprocal_rank,
+    retrieval_rank,
 )
 
 
 def test_file_matches_handles_windows_paths_and_partial_names():
     assert file_matches(r"C:\proj\repopilot\tasks\task_store.py", "tasks/task_store.py")
     assert file_matches("/home/u/proj/main.py", "main.py")
-    assert not file_matches("/home/u/proj/not_main.py", "main.py")   # must match a whole path part
+    assert not file_matches("/home/u/proj/not_main.py", "main.py")  # must match a whole path part
 
 
 def test_retrieval_rank_and_mrr():
@@ -38,7 +43,7 @@ def test_bundled_question_set_is_valid():
     path = Path(__file__).resolve().parents[2] / "data" / "evals" / "questions.yaml"
     questions = load_questions(path)
     assert len(questions) >= 20
-    assert len({q.id for q in questions}) == len(questions)   # ids are unique
+    assert len({q.id for q in questions}) == len(questions)  # ids are unique
     # every expected file actually exists (paths are relative to the package folder;
     # retrieval matching is by path suffix, so they match from the project root too)
     package = path.parents[2] / "src"

@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-
 from repopilot.agents.answer_critic import AnswerVerdict
 from repopilot.observability import usage
 from repopilot.observability.usage import UsageStore
@@ -15,7 +14,7 @@ from repopilot.workflows.ask_workflow import handle_query
 def project(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(usage, "_store", UsageStore(str(tmp_path / "usage.db")))
-    monkeypatch.setitem(av.config, "ask", {"initial_search": False})   # tested in test_ask_workflow.py
+    monkeypatch.setitem(av.config, "ask", {"initial_search": False})  # tested in test_ask_workflow.py
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "orders.py").write_text("def place_order():\n    pass\n\n\ndef cancel_order():\n    pass\n")
     return tmp_path
@@ -27,16 +26,19 @@ def critic_says(monkeypatch, verdict: AnswerVerdict):
     async def fake(question, answer, evidence, unknown_names):
         calls.append(unknown_names)
         return verdict
+
     monkeypatch.setattr(av, "critique_answer", fake)
     return calls
 
 
 def test_valid_citations_in_every_common_format():
-    answer = ("`place_order` is in `src/orders.py:1`, `cancel_order` in src/orders.py (lines 5-6) "
-              "and orders.py line 2. Docs: https://example.com/guide.py")
+    answer = (
+        "`place_order` is in `src/orders.py:1`, `cancel_order` in src/orders.py (lines 5-6) "
+        "and orders.py line 2. Docs: https://example.com/guide.py"
+    )
     report = check_citations(answer, [], evidence=[])
     assert report.problems == []
-    assert report.checked == 3                        # the URL is not a citation
+    assert report.checked == 3  # the URL is not a citation
 
 
 def test_missing_files_and_lines_past_the_end_are_problems():
@@ -56,7 +58,7 @@ def test_a_bare_file_name_can_be_a_plain_mention():
 def test_code_names_missing_from_the_retrieved_code_are_reported():
     answer = "`place_order` calls `charge_card` via `PaymentGateway.charge`, see `/plan` and `True`."
     report = check_citations(answer, [], evidence=["def place_order(): ..."])
-    assert report.unknown_names == ["charge_card", "PaymentGateway.charge"]   # not /plan or True
+    assert report.unknown_names == ["charge_card", "PaymentGateway.charge"]  # not /plan or True
 
 
 def test_citation_problems_skip_the_critic(monkeypatch):
@@ -86,9 +88,11 @@ class FakeAgent:
     async def ainvoke(self, payload, config):
         text = payload["messages"][0]["content"]
         self.prompts.append(text)
-        self.history += [HumanMessage(text),
-                         ToolMessage(content="def place_order():\n    pass", tool_call_id="1"),
-                         AIMessage(self.answers.pop(0))]
+        self.history += [
+            HumanMessage(text),
+            ToolMessage(content="def place_order():\n    pass", tool_call_id="1"),
+            AIMessage(self.answers.pop(0)),
+        ]
         return {"messages": list(self.history)}
 
 
@@ -100,7 +104,7 @@ def test_failed_answer_is_revised_once_with_the_reasons(monkeypatch):
 
     assert result.revised and result.check.passed
     assert result.answer == "It's `place_order` in `src/orders.py:1`."
-    assert "src/order.py" in agent.prompts[1]        # the revision prompt says what was wrong
+    assert "src/order.py" in agent.prompts[1]  # the revision prompt says what was wrong
 
 
 def test_answer_still_failing_after_the_revision_is_flagged(monkeypatch):
@@ -109,5 +113,5 @@ def test_answer_still_failing_after_the_revision_is_flagged(monkeypatch):
 
     result = asyncio.run(handle_query(agent, "q", "t2"))
 
-    assert len(agent.prompts) == 2                   # ask.max_revisions = 1
+    assert len(agent.prompts) == 2  # ask.max_revisions = 1
     assert not result.check.passed and result.answer == "second"

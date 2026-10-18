@@ -1,9 +1,7 @@
 from langchain_qdrant import RetrievalMode
-
 from repopilot.config import config
-from repopilot.retrieval.indexing.qdrant import vector_store
 from repopilot.observability.logger import get_logger
-
+from repopilot.retrieval.indexing.qdrant import vector_store
 
 logger = get_logger(__name__)
 
@@ -22,14 +20,16 @@ def retrieve(query: str, k: int = 5) -> list[dict]:
     chunks = []
     for doc, score in results:
         meta = doc.metadata
-        chunks.append({
-            "content":    doc.page_content,
-            "source":     meta["source"],
-            "name":       meta["name"],
-            "type":       meta["type"],
-            "start_line": meta["start_line"],
-            "end_line":   meta["end_line"],
-            "distance":   score,
-        })
+        chunks.append(
+            {
+                "content": doc.page_content,
+                "source": meta["source"],
+                "name": meta["name"],
+                "type": meta["type"],
+                "start_line": meta["start_line"],
+                "end_line": meta["end_line"],
+                "distance": score,
+            }
+        )
     logger.info(f"Retrieved {len(chunks)} chunks")
     return chunks

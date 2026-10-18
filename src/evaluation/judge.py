@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
-
 from repopilot.evaluation.metrics import EvalQuestion
 from repopilot.services.llm_service import get_fallback_llm, get_judge_llm, with_schema
 
@@ -22,8 +21,8 @@ _JUDGE_CONTEXT_CHARS = 12_000
 
 class JudgeVerdict(BaseModel):
     faithfulness: float = Field(description="0-1: how fully the answer's claims are supported by the retrieved code")
-    correctness:  float = Field(description="0-1: how well the answer correctly and completely answers the question")
-    reason: str         = Field(description="One short sentence")
+    correctness: float = Field(description="0-1: how well the answer correctly and completely answers the question")
+    reason: str = Field(description="One short sentence")
 
 
 _JUDGE_PROMPT = """You grade answers from a code assistant.
@@ -60,5 +59,5 @@ async def judge_answer(question: EvalQuestion, answer: str, tool_outputs: list[s
     )
     verdict = await llm.ainvoke(prompt)
     verdict.faithfulness = min(max(verdict.faithfulness, 0.0), 1.0)
-    verdict.correctness  = min(max(verdict.correctness, 0.0), 1.0)
+    verdict.correctness = min(max(verdict.correctness, 0.0), 1.0)
     return verdict

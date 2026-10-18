@@ -3,12 +3,9 @@ import re
 from contextlib import contextmanager
 
 from langchain.tools import tool
-
-
-from repopilot.tools.sources import add_source, display_path
-from repopilot.retrieval.search.factory import get_retriever
 from repopilot.observability.logger import get_logger
-
+from repopilot.retrieval.search.factory import get_retriever
+from repopilot.tools.sources import add_source, display_path
 
 logger = get_logger(__name__)
 
@@ -35,30 +32,31 @@ def _query_key(query: str) -> str:
 
 @tool
 def search_codebase(query: str) -> str:
-   """
-   Search the codebase for relevant classes, functions or logic.
-   Use this tool whenever you need to find code related to a question.
-   """
-   logger.info(f"Tool called: search_codebase with query: {query}")
-   searched = _searched.get()
-   if searched is not None:
-       if _query_key(query) in searched:
-           return (f'You already searched for "{query}" while answering this question; those results '
-                   "are above. Search with different words (another name, the file, a caller), use "
-                   "find_symbol for an exact function or class name, or answer with what you have.")
-       searched.add(_query_key(query))
-   retrieve = get_retriever()
-   chunks = retrieve(query, k=5)
-   if not chunks:
-       return "No relevant code found."
+    """
+    Search the codebase for relevant classes, functions or logic.
+    Use this tool whenever you need to find code related to a question.
+    """
+    logger.info(f"Tool called: search_codebase with query: {query}")
+    searched = _searched.get()
+    if searched is not None:
+        if _query_key(query) in searched:
+            return (
+                f'You already searched for "{query}" while answering this question; those results '
+                "are above. Search with different words (another name, the file, a caller), use "
+                "find_symbol for an exact function or class name, or answer with what you have."
+            )
+        searched.add(_query_key(query))
+    retrieve = get_retriever()
+    chunks = retrieve(query, k=5)
+    if not chunks:
+        return "No relevant code found."
 
-
-   results = []
-   for chunk in chunks:
-       add_source(chunk["source"], chunk["start_line"], chunk["end_line"])
-       results.append(
-           f"File: {display_path(chunk['source'])} (lines {chunk['start_line']}-{chunk['end_line']})\n"
-           f"Type: {chunk['type']} — {chunk['name']}\n"
-           f"Code:\n{chunk['content']}\n"
-       )
-   return "\n---\n".join(results)
+    results = []
+    for chunk in chunks:
+        add_source(chunk["source"], chunk["start_line"], chunk["end_line"])
+        results.append(
+            f"File: {display_path(chunk['source'])} (lines {chunk['start_line']}-{chunk['end_line']})\n"
+            f"Type: {chunk['type']} — {chunk['name']}\n"
+            f"Code:\n{chunk['content']}\n"
+        )
+    return "\n---\n".join(results)

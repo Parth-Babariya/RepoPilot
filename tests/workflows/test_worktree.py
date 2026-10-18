@@ -2,7 +2,6 @@ import shutil
 import subprocess
 
 import pytest
-
 from repopilot.workflows import worktree as wt_module
 from repopilot.workflows.worktree import apply_work, commit_work, open_worktree, remove_worktree
 
@@ -10,8 +9,13 @@ pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git is not 
 
 
 def git(repo, *args) -> str:
-    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo,
-                          capture_output=True, text=True, check=True).stdout
+    return subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
 
 
 @pytest.fixture
@@ -33,7 +37,7 @@ def test_plan_work_stays_out_of_the_checkout_until_applied(repo):
     (wt.workspace / "__pycache__").mkdir()
     (wt.workspace / "__pycache__" / "new.cpython-312.pyc").write_bytes(b"junk")
 
-    assert (repo / "app.py").read_text() == "print('v1')\n"      # checkout untouched while it runs
+    assert (repo / "app.py").read_text() == "print('v1')\n"  # checkout untouched while it runs
     stat = commit_work(wt, "plan")
     assert "app.py" in stat and "new.py" in stat and "pyc" not in stat
 
@@ -41,7 +45,7 @@ def test_plan_work_stays_out_of_the_checkout_until_applied(repo):
     ok, _ = apply_work(wt)
     assert ok
     assert (repo / "app.py").read_text() == "print('v2')\n"
-    assert set(git(repo, "diff", "--cached", "--name-only").split()) == {"app.py", "new.py"}   # staged, not committed
+    assert set(git(repo, "diff", "--cached", "--name-only").split()) == {"app.py", "new.py"}  # staged, not committed
     assert git(repo, "log", "--oneline").count("\n") == 1
 
 

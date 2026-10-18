@@ -3,12 +3,12 @@ Integration test for the Qdrant store — runs only when a Qdrant server is reac
 at localhost:6333 (or QDRANT_URL); skipped otherwise, e.g. in CI.
 Start one with: docker run -p 6333:6333 qdrant/qdrant
 """
+
 import os
 import socket
 from urllib.parse import urlparse
 
 import pytest
-
 from repopilot.config import config
 
 
@@ -31,9 +31,11 @@ def qdrant_project(tmp_path, monkeypatch):
     from repopilot.retrieval.indexing import qdrant
 
     (tmp_path / "billing.py").write_text(
-        "def calculate_invoice_total(items):\n    return sum(i.price * i.quantity for i in items)\n")
+        "def calculate_invoice_total(items):\n    return sum(i.price * i.quantity for i in items)\n"
+    )
     (tmp_path / "users.py").write_text(
-        "def register_user(email, password):\n    return {'email': email, 'hash': hash(password)}\n")
+        "def register_user(email, password):\n    return {'email': email, 'hash': hash(password)}\n"
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setitem(config["vector_store"], "provider", "qdrant")
     monkeypatch.setitem(config["qdrant"], "collection_name", "repopilot_test")
@@ -46,6 +48,7 @@ def qdrant_project(tmp_path, monkeypatch):
 
 def search(query: str, mode: str, monkeypatch) -> list[str]:
     from repopilot.retrieval.search.qdrant import retrieve
+
     monkeypatch.setitem(config["rag"], "mode", mode)
     return [os.path.basename(c["source"]) for c in retrieve(query, k=2)]
 
@@ -54,7 +57,7 @@ def test_one_index_serves_both_search_modes(qdrant_project, monkeypatch):
     root, qdrant, _ = qdrant_project
     qdrant.index_codebase(str(root))
 
-    for mode in ("semantic", "hybrid"):                  # no re-index between modes
+    for mode in ("semantic", "hybrid"):  # no re-index between modes
         assert search("invoice total price", mode, monkeypatch)[0] == "billing.py"
         assert search("register_user", mode, monkeypatch)[0] == "users.py"
 
@@ -73,10 +76,12 @@ def test_watcher_updates_and_removals(qdrant_project, monkeypatch):
 
 def test_old_dense_only_collection_is_rebuilt(qdrant_project, monkeypatch):
     from qdrant_client import models
+
     root, qdrant, client = qdrant_project
     # layout written by older versions: dense vectors only, no keyword vectors
-    client.create_collection(qdrant.collection_name(),
-                             vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE))
+    client.create_collection(
+        qdrant.collection_name(), vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE)
+    )
 
     qdrant.index_codebase(str(root))
 

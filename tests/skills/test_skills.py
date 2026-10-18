@@ -15,9 +15,9 @@ def test_builtin_skills_load_and_are_well_formed():
     assert set(registry.skill_names) == {"trace_flow", "review_code", "debug_error"}
     prompt = registry.build_skills_prompt()
     for name in registry.skill_names:
-        assert f"- {name}:" in prompt                       # listed with its description
+        assert f"- {name}:" in prompt  # listed with its description
         assert "when_to_use" in prompt
-        assert len(registry.load_skill(name)) > 200          # has real instructions
+        assert len(registry.load_skill(name)) > 200  # has real instructions
 
 
 def test_repo_skills_add_to_and_override_builtins(tmp_path):
@@ -28,7 +28,7 @@ def test_repo_skills_add_to_and_override_builtins(tmp_path):
     registry.load()
 
     assert {"trace_flow", "debug_error", "release_notes", "review_code"} == set(registry.skill_names)
-    assert registry.load_skill("review_code") == "Team checklist."   # repo's version wins
+    assert registry.load_skill("review_code") == "Team checklist."  # repo's version wins
 
 
 def test_no_skills_means_empty_prompt(tmp_path):

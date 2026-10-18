@@ -6,7 +6,6 @@ from functools import lru_cache
 from repopilot.config import config
 from repopilot.observability.logger import get_logger
 
-
 logger = get_logger(__name__)
 
 # ------------------------------------------------------------------
@@ -25,14 +24,14 @@ logger = get_logger(__name__)
 # log a warning and fall back to plain vector-search order.
 # ------------------------------------------------------------------
 
-_DOC_CHARS = 2000   # cross-encoders read ~512 tokens; longer text is wasted work
+_DOC_CHARS = 2000  # cross-encoders read ~512 tokens; longer text is wasted work
 
 
 def rerank_config() -> dict:
     cfg = config.get("rerank", {}) or {}
     return {
-        "enabled":    bool(cfg.get("enabled", False)),
-        "model":      cfg.get("model", "jinaai/jina-reranker-v1-tiny-en"),
+        "enabled": bool(cfg.get("enabled", False)),
+        "model": cfg.get("model", "jinaai/jina-reranker-v1-tiny-en"),
         "candidates": int(cfg.get("candidates", 20)),
     }
 
@@ -40,6 +39,7 @@ def rerank_config() -> dict:
 @lru_cache(maxsize=1)
 def _get_encoder(model_name: str):
     from fastembed.rerank.cross_encoder import TextCrossEncoder
+
     logger.info(f"Loading reranker model {model_name} (downloaded on first use)")
     return TextCrossEncoder(model_name=model_name)
 
@@ -62,12 +62,12 @@ def rerank(query: str, chunks: list[dict], k: int, encoder=None) -> list[dict]:
         return chunks[:k]
     try:
         encoder = encoder or _get_encoder(rerank_config()["model"])
-        scores  = list(encoder.rerank(query, [_document(c) for c in chunks]))
+        scores = list(encoder.rerank(query, [_document(c) for c in chunks]))
     except Exception as e:
         logger.warning(f"Reranking failed, using vector-search order: {e}")
         return chunks[:k]
 
-    ranked = sorted(zip(scores, range(len(chunks))), key=lambda pair: -pair[0])
+    ranked = sorted(zip(scores, range(len(chunks)), strict=False), key=lambda pair: -pair[0])
     return [chunks[i] | {"rerank_score": float(score)} for score, i in ranked[:k]]
 
 
@@ -77,7 +77,7 @@ def with_reranking(retrieve):
 
     def retrieve_and_rerank(query: str, k: int = 5) -> list[dict]:
         candidates = retrieve(query, k=max(k, settings["candidates"]))
-        reranked   = rerank(query, candidates, k)
+        reranked = rerank(query, candidates, k)
         logger.info(f"Reranked {len(candidates)} candidates → top {len(reranked)}")
         return reranked
 

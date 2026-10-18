@@ -3,30 +3,29 @@ from __future__ import annotations
 import json
 import re
 
-from pydantic import BaseModel, Field
 from langchain.agents import create_agent
-
-from repopilot.services.llm_service import chat_model, fallback_middleware, response_format
+from pydantic import BaseModel, Field
 from repopilot.agents.task_spec import TaskType
-from repopilot.retrieval.repo_map import build_repo_map
 from repopilot.observability.logger import get_logger
+from repopilot.retrieval.repo_map import build_repo_map
+from repopilot.services.llm_service import chat_model, fallback_middleware, response_format
 
 logger = get_logger(__name__)
 
 
 class PlannedTask(BaseModel):
-    id: str                          # stable snake_case e.g. task_001
+    id: str  # stable snake_case e.g. task_001
     title: str
     description: str
     task_type: TaskType
-    depends_on: list[str]            # list of task IDs that must complete first
+    depends_on: list[str]  # list of task IDs that must complete first
     estimated_minutes: int
-    output_files: list[str]          # files this task will create/modify
-    acceptance_criteria: list[str]   # what "done" looks like for the judge
+    output_files: list[str]  # files this task will create/modify
+    acceptance_criteria: list[str]  # what "done" looks like for the judge
     verify_command: str = Field(
         default="",
         description="One shell command, run from the project root, that exits 0 only when "
-                    "this task is done (e.g. its tests). Empty if nothing can be run yet.",
+        "this task is done (e.g. its tests). Empty if nothing can be run yet.",
     )
 
 
@@ -41,8 +40,8 @@ class ExecutionPlan(BaseModel):
 
 
 class RevisedPlan(BaseModel):
-    reason: str                      # what changed and why, in one or two sentences
-    tasks: list[PlannedTask]         # the new tasks that finish the goal from here
+    reason: str  # what changed and why, in one or two sentences
+    tasks: list[PlannedTask]  # the new tasks that finish the goal from here
 
 
 _TASK_RULES = """\
@@ -90,7 +89,7 @@ def repository_context() -> str:
     """
     try:
         outline = build_repo_map()
-    except Exception as e:      # an outline is a help, never a reason to fail planning
+    except Exception as e:  # an outline is a help, never a reason to fail planning
         logger.warning(f"Could not build the repo map: {e}")
         return ""
     return f"CURRENT REPOSITORY (outline: files with their classes and functions):\n{outline}"
@@ -122,6 +121,7 @@ def create_plan(goal: str, extra_context: str = "") -> ExecutionPlan:
 # Re-planning after a failure
 # ------------------------------------------------------------------
 
+
 def next_task_id(existing_ids: list[str]) -> str:
     """First unused id after the highest task_NNN, rounded up to the next hundred (task_101, …)."""
     numbers = [int(m.group(1)) for i in existing_ids if (m := re.fullmatch(r"task_(\d+)", i))]
@@ -134,8 +134,9 @@ def _task_line(task: dict, extra: str = "") -> str:
     return f"- {task['id']} [{task['task_type']}] {task['title']} (depends on: {deps}){extra}"
 
 
-def build_replan_message(goal: str, completed: list[dict], failed: dict, affected: list[dict],
-                         unaffected: list[dict], first_new_id: str) -> str:
+def build_replan_message(
+    goal: str, completed: list[dict], failed: dict, affected: list[dict], unaffected: list[dict], first_new_id: str
+) -> str:
     def lines(tasks: list[dict], detail) -> str:
         return "\n".join(_task_line(t, detail(t)) for t in tasks) or "(none)"
 
@@ -144,10 +145,10 @@ def build_replan_message(goal: str, completed: list[dict], failed: dict, affecte
 COMPLETED TASKS (done — do not redo; new tasks may depend on these IDs):
 {lines(completed, lambda t: f"{chr(10)}    result: {(t.get('result') or '')[:300]}")}
 
-FAILED TASK (failed {failed.get('retry_count', 0)} times — will be replaced):
+FAILED TASK (failed {failed.get("retry_count", 0)} times — will be replaced):
 {_task_line(failed)}
-    {failed['description']}
-    last error: {(failed.get('error') or '(none recorded)')[:2000]}
+    {failed["description"]}
+    last error: {(failed.get("error") or "(none recorded)")[:2000]}
 
 TASKS THAT DEPENDED ON IT (not started — will be replaced by your new tasks):
 {lines(affected, lambda t: f"{chr(10)}    {t['description']}")}
@@ -190,13 +191,23 @@ def validate_revision(revision: RevisedPlan, dependable_ids: set[str], existing_
     return problems
 
 
-def replan(goal: str, completed: list[dict], failed: dict, affected: list[dict],
-           unaffected: list[dict], existing_ids: list[str]) -> RevisedPlan:
+def replan(
+    goal: str,
+    completed: list[dict],
+    failed: dict,
+    affected: list[dict],
+    unaffected: list[dict],
+    existing_ids: list[str],
+) -> RevisedPlan:
     """Ask the planner for new tasks that replace the failed task and the tasks that depended on it."""
     llm = chat_model(temperature=0)
-    agent = create_agent(llm, tools=[], system_prompt=_REPLAN_SYSTEM_PROMPT,
-                         response_format=response_format(llm, RevisedPlan),
-                         middleware=fallback_middleware(temperature=0))
+    agent = create_agent(
+        llm,
+        tools=[],
+        system_prompt=_REPLAN_SYSTEM_PROMPT,
+        response_format=response_format(llm, RevisedPlan),
+        middleware=fallback_middleware(temperature=0),
+    )
     message = build_replan_message(goal, completed, failed, affected, unaffected, next_task_id(existing_ids))
     result = agent.invoke({"messages": [{"role": "user", "content": message}]})
     revision: RevisedPlan = result["structured_response"]

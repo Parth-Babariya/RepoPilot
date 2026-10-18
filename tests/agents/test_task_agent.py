@@ -2,9 +2,17 @@ from repopilot.agents.task_agent import TOOLS_BY_TYPE, build_system_prompt, open
 
 
 def task(**overrides) -> dict:
-    base = {"id": "task_001", "title": "T", "description": "Do it", "task_type": "implement",
-            "output_files": '["app.py"]', "acceptance_criteria": '["works"]',
-            "retry_count": 0, "max_retries": 3, "error": None}
+    base = {
+        "id": "task_001",
+        "title": "T",
+        "description": "Do it",
+        "task_type": "implement",
+        "output_files": '["app.py"]',
+        "acceptance_criteria": '["works"]',
+        "retry_count": 0,
+        "max_retries": 3,
+        "error": None,
+    }
     return base | overrides
 
 

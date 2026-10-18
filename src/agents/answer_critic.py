@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from pydantic import BaseModel, Field
-
 from repopilot.services.llm_service import get_fallback_llm, get_judge_llm, with_schema
 
 # ------------------------------------------------------------------
@@ -15,7 +14,7 @@ from repopilot.services.llm_service import get_fallback_llm, get_judge_llm, with
 # Same idea as the /plan critic, and the same cheap judge_model.
 # ------------------------------------------------------------------
 
-_EVIDENCE_CHARS = 12000   # retrieved code shown to the critic
+_EVIDENCE_CHARS = 12000  # retrieved code shown to the critic
 
 
 class AnswerVerdict(BaseModel):
@@ -63,7 +62,7 @@ def select_evidence(evidence: list[str], answer: str, limit: int = _EVIDENCE_CHA
     """
     terms = {a or b for a, b in _TERM.findall(answer)}
     chunks = list(dict.fromkeys(c.strip() for text in evidence for c in text.split("\n---\n") if c.strip()))
-    ranked = sorted(chunks, key=lambda c: -sum(term in c for term in terms))   # stable: ties keep retrieval order
+    ranked = sorted(chunks, key=lambda c: -sum(term in c for term in terms))  # stable: ties keep retrieval order
     picked, size = [], 0
     for chunk in ranked:
         if size + len(chunk) > limit:

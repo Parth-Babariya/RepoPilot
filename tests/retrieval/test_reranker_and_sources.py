@@ -1,14 +1,21 @@
-from repopilot.tools.sources import Source, add_source, collect_sources, format_sources
 from repopilot.retrieval.search import reranker
+from repopilot.tools.sources import Source, add_source, collect_sources, format_sources
 
 
 def chunk(name: str, content: str = "") -> dict:
-    return {"source": f"/repo/{name}.py", "name": name, "type": "function",
-            "start_line": 1, "end_line": 2, "content": content}
+    return {
+        "source": f"/repo/{name}.py",
+        "name": name,
+        "type": "function",
+        "start_line": 1,
+        "end_line": 2,
+        "content": content,
+    }
 
 
 class KeywordEncoder:
     """Stand-in cross-encoder: score = how often the query's words appear in the document."""
+
     def rerank(self, query, documents):
         words = query.lower().split()
         return [sum(doc.lower().count(w) for w in words) for doc in documents]
@@ -32,8 +39,7 @@ def test_rerank_falls_back_to_vector_order_on_error():
 
 
 def test_with_reranking_overfetches_candidates(monkeypatch):
-    monkeypatch.setattr(reranker, "rerank_config",
-                        lambda: {"enabled": True, "model": "x", "candidates": 20})
+    monkeypatch.setattr(reranker, "rerank_config", lambda: {"enabled": True, "model": "x", "candidates": 20})
     monkeypatch.setattr(reranker, "_get_encoder", lambda model: KeywordEncoder())
     requested = {}
 
@@ -47,7 +53,7 @@ def test_with_reranking_overfetches_candidates(monkeypatch):
 
 
 def test_sources_are_collected_only_inside_collect_sources():
-    add_source("/repo/ignored.py", 1)          # no-op: nothing is collecting
+    add_source("/repo/ignored.py", 1)  # no-op: nothing is collecting
     with collect_sources() as sources:
         add_source("/repo/a.py", 10, 20)
     assert sources == [Source("/repo/a.py", 10, 20)]
@@ -55,8 +61,10 @@ def test_sources_are_collected_only_inside_collect_sources():
 
 def test_format_sources_merges_overlapping_ranges_per_file():
     sources = [
-        Source("/repo/a.py", 10, 20), Source("/repo/b.py", 5, 5),
-        Source("/repo/a.py", 15, 30), Source("/repo/a.py", 50, 50),
+        Source("/repo/a.py", 10, 20),
+        Source("/repo/b.py", 5, 5),
+        Source("/repo/a.py", 15, 30),
+        Source("/repo/a.py", 50, 50),
     ]
     lines = format_sources(sources)
     assert lines[0].endswith("a.py:10-30, 50")

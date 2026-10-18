@@ -3,7 +3,6 @@ import sqlite3
 from types import SimpleNamespace
 
 import pytest
-
 from repopilot.workflows.task_store import SQLiteTaskStore
 
 
@@ -92,7 +91,7 @@ def test_finished_project_is_not_resumed(store):
 
 
 def test_latest_project_is_newest(store):
-    first  = store.create_project("one", make_plan([("a1", [])]))
+    first = store.create_project("one", make_plan([("a1", [])]))
     second = store.create_project("two", make_plan([("b1", [])]))
     assert store.get_latest_project() == second
     store.finish_project(second, "abandoned")
@@ -101,12 +100,12 @@ def test_latest_project_is_newest(store):
 
 def test_two_projects_can_reuse_task_ids(store):
     # every plan numbers its tasks task_001…; that used to fail with UNIQUE constraint
-    first  = store.create_project("one", make_plan([("task_001", [])]))
+    first = store.create_project("one", make_plan([("task_001", [])]))
     second = store.create_project("two", make_plan([("task_001", [])]))
 
     store.claim_task(second, "task_001")
     store.complete_task(second, "task_001", "done")
-    assert statuses(store, first)  == {"task_001": "pending"}
+    assert statuses(store, first) == {"task_001": "pending"}
     assert statuses(store, second) == {"task_001": "completed"}
 
 
@@ -123,10 +122,15 @@ def test_apply_replan_replaces_tasks_and_appends_new_ones(store):
 
     store.apply_replan(pid, ["a", "b"], [make_task("task_101", []), make_task("task_102", ["task_101"])], "split a")
 
-    assert statuses(store, pid) == {"a": "replaced", "b": "replaced", "c": "pending",
-                                    "task_101": "pending", "task_102": "pending"}
-    assert [t["id"] for t in store.get_all_tasks(pid)][-2:] == ["task_101", "task_102"]   # appended in order
-    assert store.block_unreachable_tasks(pid) == 0   # replaced tasks don't block anything
+    assert statuses(store, pid) == {
+        "a": "replaced",
+        "b": "replaced",
+        "c": "pending",
+        "task_101": "pending",
+        "task_102": "pending",
+    }
+    assert [t["id"] for t in store.get_all_tasks(pid)][-2:] == ["task_101", "task_102"]  # appended in order
+    assert store.block_unreachable_tasks(pid) == 0  # replaced tasks don't block anything
 
 
 def test_old_database_is_migrated(tmp_path):
@@ -150,7 +154,7 @@ def test_old_database_is_migrated(tmp_path):
     conn.close()
 
     store = SQLiteTaskStore(str(db))
-    assert statuses(store, "p1") == {"task_001": "completed"}            # old rows kept
+    assert statuses(store, "p1") == {"task_001": "completed"}  # old rows kept
     new = store.create_project("new goal", make_plan([("task_001", [])]))  # same id now allowed
     assert statuses(store, new) == {"task_001": "pending"}
 
@@ -158,6 +162,7 @@ def test_old_database_is_migrated(tmp_path):
 def test_every_task_status_has_a_display_style():
     from repopilot.workflows.status import _STATUS_STYLE
     from repopilot.workflows.task_store import TaskStatus
+
     assert set(_STATUS_STYLE) == set(TaskStatus)
 
 

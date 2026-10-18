@@ -4,10 +4,9 @@ import json
 
 from langchain.agents import create_agent
 from pydantic import BaseModel
-
+from repopilot.agents.task_spec import json_list
 from repopilot.guardrails.tool_safety import check_path, resolve_path
 from repopilot.services.llm_service import fallback_middleware, get_judge_llm, response_format
-from repopilot.agents.task_spec import json_list
 
 # ------------------------------------------------------------------
 # Critic agent — LLM-as-judge for /plan tasks.
@@ -17,13 +16,13 @@ from repopilot.agents.task_spec import json_list
 # summary is shown last and labelled as a claim, not evidence.
 # ------------------------------------------------------------------
 
-_FILE_CHARS = 6000   # total file content shown to the critic
+_FILE_CHARS = 6000  # total file content shown to the critic
 
 
 class CriticVerdict(BaseModel):
     passed: bool
-    score: int    # 0-10
-    reason: str   # one sentence
+    score: int  # 0-10
+    reason: str  # one sentence
 
 
 _SYSTEM_PROMPT = """\
@@ -54,18 +53,22 @@ def file_excerpts(task: dict) -> str:
             text = f"(could not read: {e})"
         cut = "\n… (truncated)" if len(text) > per_file else ""
         parts.append(f"=== {f} ===\n{text[:per_file]}{cut}")
-    return "\n\n".join(parts)[:_FILE_CHARS + 500]
+    return "\n\n".join(parts)[: _FILE_CHARS + 500]
 
 
 async def judge_task(task: dict, agent_output: str, check_report: str) -> CriticVerdict:
     """Grade one task with the cheaper judge_model; returns passed / score / reason."""
     llm = get_judge_llm("plan-judge", temperature=0, max_tokens=1000)
-    critic = create_agent(llm, tools=[], system_prompt=_SYSTEM_PROMPT,
-                          response_format=response_format(llm, CriticVerdict),
-                          middleware=fallback_middleware(feature="plan-judge", temperature=0, max_tokens=1000))
+    critic = create_agent(
+        llm,
+        tools=[],
+        system_prompt=_SYSTEM_PROMPT,
+        response_format=response_format(llm, CriticVerdict),
+        middleware=fallback_middleware(feature="plan-judge", temperature=0, max_tokens=1000),
+    )
 
-    user_message = f"""TASK: {task['title']}
-DESCRIPTION: {task['description']}
+    user_message = f"""TASK: {task["title"]}
+DESCRIPTION: {task["description"]}
 ACCEPTANCE CRITERIA: {json.dumps(json_list(task.get("acceptance_criteria")), indent=2)}
 
 AUTOMATIC CHECKS (run by the system, not the agent):

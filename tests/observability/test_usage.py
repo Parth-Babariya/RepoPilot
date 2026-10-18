@@ -5,7 +5,6 @@ import pytest
 from langchain_core.embeddings import Embeddings
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
-
 from repopilot.observability import usage
 from repopilot.observability.usage import TrackedEmbeddings, UsageCallback, UsageStore, track
 
@@ -18,11 +17,15 @@ def store(tmp_path, monkeypatch):
 
 
 def fake_llm_end(callback: UsageCallback, input_tokens: int, output_tokens: int) -> None:
-    run_id  = uuid.uuid4()
-    message = AIMessage(content="hi", usage_metadata={
-        "input_tokens": input_tokens, "output_tokens": output_tokens,
-        "total_tokens": input_tokens + output_tokens,
-    })
+    run_id = uuid.uuid4()
+    message = AIMessage(
+        content="hi",
+        usage_metadata={
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        },
+    )
     callback.on_chat_model_start({}, [[]], run_id=run_id)
     callback.on_llm_end(LLMResult(generations=[[ChatGeneration(message=message)]]), run_id=run_id)
 
@@ -45,7 +48,7 @@ def test_llm_calls_are_tagged_with_feature_and_session(store):
     assert set(rows) == {"ask", "plan"}
     assert rows["ask"]["tokens"] == 1500
     assert rows["ask"]["cost"] == pytest.approx((1000 * 0.15 + 500 * 0.60) / 1e6)
-    assert sum(r["calls"] for r in store.summary_by_feature()) == 3   # all time
+    assert sum(r["calls"] for r in store.summary_by_feature()) == 3  # all time
 
 
 def test_fixed_feature_overrides_context(store):
@@ -63,7 +66,7 @@ def test_unpriced_model_is_reported(store):
 
 def test_cache_savings_estimate(store):
     with track("ask", "s"):
-        fake_llm_end(UsageCallback("gpt-4o-mini"), 1_000_000, 0)   # $0.15 for one uncached question
+        fake_llm_end(UsageCallback("gpt-4o-mini"), 1_000_000, 0)  # $0.15 for one uncached question
         store.record_question(cache_hit=False, latency_ms=1000)
         store.record_question(cache_hit=True, latency_ms=50)
         store.record_question(cache_hit=True, latency_ms=50)
@@ -88,7 +91,7 @@ def test_embeddings_are_tracked(store):
     rows = store.summary_by_feature("s")
     assert rows[0]["kind"] == "embedding"
     assert rows[0]["calls"] == 2
-    assert rows[0]["tokens"] == 210   # ~4 chars per token
+    assert rows[0]["tokens"] == 210  # ~4 chars per token
 
 
 def test_eval_cost_excludes_judge(store):

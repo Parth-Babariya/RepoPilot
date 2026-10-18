@@ -4,12 +4,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from repopilot.config import config
+from repopilot.observability.logger import get_logger
 from rich.console import Console
 from rich.markup import escape
 from rich.syntax import Syntax
-
-from repopilot.config import config
-from repopilot.observability.logger import get_logger
 
 logger = get_logger(__name__)
 console = Console()
@@ -38,21 +37,24 @@ console = Console()
 _AUTHOR = ["-c", "user.name=RepoPilot", "-c", "user.email=repopilot@localhost"]
 
 # Build/test leftovers that are never part of the work (test runs create them).
-_NOT_WORK = [f":(exclude,glob)**/{p}" for p in
-             ("__pycache__/**", "*.pyc", ".pytest_cache/**", ".mypy_cache/**", "node_modules/**")]
+_NOT_WORK = [
+    f":(exclude,glob)**/{p}"
+    for p in ("__pycache__/**", "*.pyc", ".pytest_cache/**", ".mypy_cache/**", "node_modules/**")
+]
 
 
 @dataclass
 class Worktree:
-    path: Path        # top level of the worktree
-    workspace: Path   # where agents work: the worktree's copy of the folder RepoPilot runs in
+    path: Path  # top level of the worktree
+    workspace: Path  # where agents work: the worktree's copy of the folder RepoPilot runs in
     branch: str
-    repo: Path        # top level of your checkout
+    repo: Path  # top level of your checkout
 
 
 def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
-                          text=True, encoding="utf-8", errors="replace")
+    return subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
 
 
 def isolation_enabled() -> bool:
@@ -77,32 +79,41 @@ def open_worktree(project_id: str, cwd: Path | None = None) -> Worktree | None:
     cwd = (cwd or Path.cwd()).resolve()
     repo = _repo_root(cwd)
     if repo is None:
-        console.print("[yellow]Not a git repository with at least one commit — "
-                      "tasks will write directly into this folder.[/yellow]")
+        console.print(
+            "[yellow]Not a git repository with at least one commit — "
+            "tasks will write directly into this folder.[/yellow]"
+        )
         return None
 
-    short  = project_id[:8]
+    short = project_id[:8]
     branch = f"repopilot/plan-{short}"
-    path   = cwd / ".repopilot" / "worktrees" / short
+    path = cwd / ".repopilot" / "worktrees" / short
     try:
         workspace = path / cwd.relative_to(repo)
     except ValueError:
         workspace = path
 
     if not (path / ".git").exists():
-        _git("worktree", "prune", cwd=repo)   # forget worktrees whose folder was deleted
+        _git("worktree", "prune", cwd=repo)  # forget worktrees whose folder was deleted
         has_branch = _git("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=repo).returncode == 0
-        args = (["worktree", "add", str(path), branch] if has_branch
-                else ["worktree", "add", "-b", branch, str(path), "HEAD"])
+        args = (
+            ["worktree", "add", str(path), branch]
+            if has_branch
+            else ["worktree", "add", "-b", branch, str(path), "HEAD"]
+        )
         result = _git(*args, cwd=repo)
         if result.returncode != 0:
             logger.warning(f"git worktree add failed: {result.stderr}")
-            console.print(f"[yellow]Couldn't create a git worktree ({escape(result.stderr.strip()[:200])}) — "
-                          "tasks will write directly into this folder.[/yellow]")
+            console.print(
+                f"[yellow]Couldn't create a git worktree ({escape(result.stderr.strip()[:200])}) — "
+                "tasks will write directly into this folder.[/yellow]"
+            )
             return None
         if _git("status", "--porcelain", "--untracked-files=no", cwd=repo).stdout.strip():
-            console.print("[yellow]Note: you have uncommitted changes. The plan works from your last "
-                          "commit, without them.[/yellow]")
+            console.print(
+                "[yellow]Note: you have uncommitted changes. The plan works from your last "
+                "commit, without them.[/yellow]"
+            )
 
     workspace.mkdir(parents=True, exist_ok=True)
     return Worktree(path, workspace, branch, repo)
@@ -148,8 +159,11 @@ def review_changes(wt: Worktree, goal: str) -> bool:
     console.print(f"\n[bold]Changes made by the plan[/bold] [dim](branch {wt.branch})[/dim]")
     console.print(escape(stat), highlight=False)
     while True:
-        choice = input("\n[A]pply to your checkout · [V]iew the full diff · "
-                       "[K]eep the branch for later · [D]iscard  > ").strip().lower()[:1]
+        choice = (
+            input("\n[A]pply to your checkout · [V]iew the full diff · [K]eep the branch for later · [D]iscard  > ")
+            .strip()
+            .lower()[:1]
+        )
         if choice == "v":
             diff = _git("diff", f"HEAD...{wt.branch}", cwd=wt.repo).stdout
             console.print(Syntax(diff, "diff", theme="monokai", word_wrap=True))
@@ -158,17 +172,23 @@ def review_changes(wt: Worktree, goal: str) -> bool:
             ok, message = apply_work(wt)
             if ok:
                 _git("branch", "-D", wt.branch, cwd=wt.repo)
-                console.print("[green]✓ Applied as staged, uncommitted changes — review them with "
-                              "`git diff --cached`, then commit.[/green]")
+                console.print(
+                    "[green]✓ Applied as staged, uncommitted changes — review them with "
+                    "`git diff --cached`, then commit.[/green]"
+                )
                 return True
             console.print(f"[red]Couldn't apply the changes:[/red] {escape(message[:400])}")
-            console.print(f"[dim]They are kept on branch {wt.branch} — commit or stash your own changes, "
-                          f"then run: git merge --squash {wt.branch}[/dim]")
+            console.print(
+                f"[dim]They are kept on branch {wt.branch} — commit or stash your own changes, "
+                f"then run: git merge --squash {wt.branch}[/dim]"
+            )
             return False
         elif choice == "k":
             remove_worktree(wt, delete_branch=False)
-            console.print(f"[dim]Kept on branch {wt.branch}. See it with `git diff HEAD...{wt.branch}`; "
-                          f"apply it with `git merge --squash {wt.branch}`.[/dim]")
+            console.print(
+                f"[dim]Kept on branch {wt.branch}. See it with `git diff HEAD...{wt.branch}`; "
+                f"apply it with `git merge --squash {wt.branch}`.[/dim]"
+            )
             return False
         elif choice == "d":
             remove_worktree(wt, delete_branch=True)

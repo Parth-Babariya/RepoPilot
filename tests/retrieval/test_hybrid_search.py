@@ -3,8 +3,14 @@ from repopilot.retrieval.search.bm25 import BM25Index, reciprocal_rank_fusion, t
 
 
 def chunk(source, name, content="", line=1):
-    return {"source": source, "name": name, "content": content, "start_line": line,
-            "end_line": line + 5, "type": "function"}
+    return {
+        "source": source,
+        "name": name,
+        "content": content,
+        "start_line": line,
+        "end_line": line + 5,
+        "type": "function",
+    }
 
 
 def test_tokenize_splits_identifiers_and_drops_stopwords():
@@ -26,7 +32,7 @@ def test_bm25_ranks_exact_identifier_match_first():
 def test_rrf_rewards_chunks_found_by_both_methods():
     a, b, c = chunk("a.py", "a"), chunk("b.py", "b"), chunk("c.py", "c")
     fused = reciprocal_rank_fusion([[a, b], [c, b]])
-    assert fused[0]["source"] == "b.py"                 # in both lists → ranked first
+    assert fused[0]["source"] == "b.py"  # in both lists → ranked first
     assert {x["source"] for x in fused} == {"a.py", "b.py", "c.py"}
 
 
@@ -40,7 +46,7 @@ def test_keyword_index_rebuilds_after_invalidate():
     bm25.invalidate()
     assert bm25.search("fail_task", 5, load)[0]["source"] == "x.py"
     bm25.search("fail_task", 5, load)
-    assert len(loads) == 1                              # cached
+    assert len(loads) == 1  # cached
     bm25.invalidate()
     bm25.search("fail_task", 5, load)
-    assert len(loads) == 2                              # rebuilt after an index change
+    assert len(loads) == 2  # rebuilt after an index change

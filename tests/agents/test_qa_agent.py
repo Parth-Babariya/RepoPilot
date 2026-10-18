@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 
 from langchain_core.messages import AIMessage, HumanMessage
-
 from repopilot.agents.qa_agent import SEARCH_RESULTS_MARKER, GitHubToolsOnDemand
 
 

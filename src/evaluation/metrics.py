@@ -15,8 +15,8 @@ import yaml
 class EvalQuestion:
     id: str
     question: str
-    expected_files: list[str] = field(default_factory=list)   # repo-relative paths
-    expected_facts: list[str] = field(default_factory=list)   # names/phrases a correct answer mentions
+    expected_files: list[str] = field(default_factory=list)  # repo-relative paths
+    expected_facts: list[str] = field(default_factory=list)  # names/phrases a correct answer mentions
 
 
 def load_questions(path: str | Path) -> list[EvalQuestion]:
@@ -32,12 +32,14 @@ def load_questions(path: str | Path) -> list[EvalQuestion]:
     for i, item in enumerate(raw, 1):
         if not item.get("question"):
             raise ValueError(f"Question #{i} in {path} has no 'question' field")
-        questions.append(EvalQuestion(
-            id=str(item.get("id") or f"q{i}"),
-            question=item["question"],
-            expected_files=list(item.get("expected_files") or []),
-            expected_facts=list(item.get("expected_facts") or []),
-        ))
+        questions.append(
+            EvalQuestion(
+                id=str(item.get("id") or f"q{i}"),
+                question=item["question"],
+                expected_files=list(item.get("expected_files") or []),
+                expected_facts=list(item.get("expected_facts") or []),
+            )
+        )
     return questions
 
 

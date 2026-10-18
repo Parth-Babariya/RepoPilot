@@ -19,12 +19,45 @@ from collections import Counter
 # vector store (no extra storage) and rebuilt after the index changes.
 # ------------------------------------------------------------------
 
-_WORD     = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
 _SUBWORDS = re.compile(r"_+|(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _STOPWORDS = {
-    "a", "an", "the", "is", "are", "was", "be", "of", "to", "in", "on", "for", "and", "or",
-    "how", "what", "when", "where", "why", "which", "who", "does", "do", "it", "its", "this",
-    "that", "with", "by", "from", "as", "at", "if", "into", "used", "use",
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "be",
+    "of",
+    "to",
+    "in",
+    "on",
+    "for",
+    "and",
+    "or",
+    "how",
+    "what",
+    "when",
+    "where",
+    "why",
+    "which",
+    "who",
+    "does",
+    "do",
+    "it",
+    "its",
+    "this",
+    "that",
+    "with",
+    "by",
+    "from",
+    "as",
+    "at",
+    "if",
+    "into",
+    "used",
+    "use",
 }
 
 
@@ -50,7 +83,7 @@ class BM25Index:
     def __init__(self, documents: list[list[str]], k1: float = 1.5, b: float = 0.75) -> None:
         self.k1, self.b = k1, b
         self.lengths = [len(d) for d in documents]
-        self.avgdl   = (sum(self.lengths) / len(documents)) if documents else 0.0
+        self.avgdl = (sum(self.lengths) / len(documents)) if documents else 0.0
         self.postings: dict[str, list[tuple[int, int]]] = {}
         for i, doc in enumerate(documents):
             for term, tf in Counter(doc).items():

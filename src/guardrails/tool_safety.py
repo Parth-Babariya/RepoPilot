@@ -5,9 +5,9 @@ import os
 import re
 import shlex
 import subprocess
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable
 
 from repopilot.config import config
 from repopilot.observability.logger import get_logger
@@ -40,20 +40,32 @@ _SECRET_FILE_OK = {".env.example", ".env.sample", ".env.template"}
 _NO_WRITE_DIRS = {".git", ".repopilot"}
 
 _READ_ONLY_PROGRAMS = {
-    "ls", "dir", "cat", "type", "head", "tail", "wc", "pwd", "echo",
-    "grep", "findstr", "where", "which", "tree",
+    "ls",
+    "dir",
+    "cat",
+    "type",
+    "head",
+    "tail",
+    "wc",
+    "pwd",
+    "echo",
+    "grep",
+    "findstr",
+    "where",
+    "which",
+    "tree",
 }
 _GIT_READ_ONLY = {"status", "diff", "log", "show", "branch", "rev-parse", "ls-files", "blame"}
 _PIP_READ_ONLY = {"list", "show", "freeze", "--version", "-V"}
-_LINTERS = {"flake8", "pylint", "mypy", "pyflakes", "pycodestyle"}          # only ever read code
-_FORMATTER_CHECKS = {"black": "--check", "isort": "--check-only", "ruff": "check"}   # read-only only with this
+_LINTERS = {"flake8", "pylint", "mypy", "pyflakes", "pycodestyle"}  # only ever read code
+_FORMATTER_CHECKS = {"black": "--check", "isort": "--check-only", "ruff": "check"}  # read-only only with this
 _PYTHON_MODULES = {"pytest", "unittest", "py_compile", "compileall", "json.tool", *_LINTERS}
 
 
 def _settings() -> dict:
     cfg = config.get("safety", {}) or {}
     return {
-        "workspace_only":         bool(cfg.get("workspace_only", True)),
+        "workspace_only": bool(cfg.get("workspace_only", True)),
         "confirm_other_commands": bool(cfg.get("confirm_other_commands", True)),
     }
 
@@ -88,6 +100,7 @@ def resolve_path(path: str | Path) -> Path:
 # ------------------------------------------------------------------
 # Files
 # ------------------------------------------------------------------
+
 
 def _is_secret(path: Path) -> bool:
     name = path.name.lower()
@@ -132,6 +145,7 @@ def check_path(path: str, write: bool = False) -> str | None:
 # ------------------------------------------------------------------
 # Commands
 # ------------------------------------------------------------------
+
 
 def _split(command: str) -> list[str]:
     try:
@@ -236,8 +250,9 @@ def _format_result(result: subprocess.CompletedProcess) -> str:
     return "\n".join(parts) if parts else "(no output)"
 
 
-def run_guarded(command: str, cwd: str | None = None, timeout: int = 30,
-                pre_approved: bool = False) -> tuple[int | None, str]:
+def run_guarded(
+    command: str, cwd: str | None = None, timeout: int = 30, pre_approved: bool = False
+) -> tuple[int | None, str]:
     """
     Run a shell command under the policy. Returns (exit code, output);
     exit code is None when the command was refused or timed out.
@@ -260,8 +275,7 @@ def run_guarded(command: str, cwd: str | None = None, timeout: int = 30,
 
     logger.info(f"Running command ({'approved' if decision == 'ask' else reason}): {command}")
     try:
-        result = subprocess.run(command, shell=True, capture_output=True, text=True,
-                                cwd=cwd, timeout=timeout)
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=cwd, timeout=timeout)
         return result.returncode, _format_result(result)
     except subprocess.TimeoutExpired:
         return None, f"Error: command timed out after {timeout} seconds"

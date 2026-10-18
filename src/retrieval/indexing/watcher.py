@@ -3,12 +3,11 @@ from __future__ import annotations
 import platform
 import threading
 
+from repopilot.observability.logger import get_logger
+from repopilot.retrieval.indexing.code_parser import is_indexable
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.polling import PollingObserver
-from watchdog.events import FileSystemEventHandler, FileSystemEvent
-
-from repopilot.retrieval.indexing.code_parser import is_indexable
-from repopilot.observability.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -96,6 +95,7 @@ class _CodebaseEventHandler(FileSystemEventHandler):
         """
         self._timers.pop(filepath, None)
         from repopilot.retrieval.indexing.factory import get_file_indexer
+
         index_single_file, remove_file_from_index = get_file_indexer()
         try:
             if action == "delete":
@@ -147,7 +147,7 @@ def start_watcher(repo_path: str, on_change=None) -> Observer:
 
     Returns the Observer so the caller can call stop_watcher() on shutdown.
     """
-    handler  = _CodebaseEventHandler(repo_path, on_change=on_change)
+    handler = _CodebaseEventHandler(repo_path, on_change=on_change)
     observer = _get_observer()
     observer.schedule(handler, repo_path, recursive=True)
     observer.daemon = True
