@@ -1,5 +1,5 @@
 """
-Retrieval benchmark — reproduces the numbers in the README.
+Retrieval benchmark — reproduces the numbers in docs/evaluation.md.
 
 Scores search alone (no LLM, no API key, free) on the eval question set:
 for each search setup, is a file that answers the question in the top k

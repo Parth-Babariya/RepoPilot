@@ -1,5 +1,5 @@
 """
-The layer rule from the README, enforced: a module may import from its own
+The layer rule from docs/architecture.md, enforced: a module may import from its own
 layer or any layer below it, never from a layer above.
 
     main → workflows / evaluation → agents → tools · retrieval · memory · skills · protocols
