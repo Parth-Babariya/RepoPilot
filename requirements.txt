@@ -39,3 +39,4 @@ watchdog>=6.0.0,<7.0.0
 
 # Tests
 pytest>=8.0
+ruff>=0.17

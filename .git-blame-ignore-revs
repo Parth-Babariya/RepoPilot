@@ -1,0 +1,3 @@
+# Formatting-only commits, skipped by GitHub blame (locally: git config blame.ignoreRevsFile .git-blame-ignore-revs)
+# Format with ruff and fix lint findings
+7a019a669db137491eed3c5d8f14ae6fc406ed74

@@ -4,7 +4,7 @@ import json
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from repopilot.observability.logger import get_logger
@@ -12,7 +12,7 @@ from repopilot.observability.logger import get_logger
 logger = get_logger(__name__)
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """
     All valid states a task can be in.
 

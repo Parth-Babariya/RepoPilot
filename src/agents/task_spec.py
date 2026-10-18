@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from enum import Enum
+from enum import StrEnum
 
 # ------------------------------------------------------------------
 # What a /plan task is — shared by the agents that plan it (planner),
@@ -11,7 +11,7 @@ from enum import Enum
 # ------------------------------------------------------------------
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     """Decides which tools the task agent gets (agents/task_agent.py)."""
 
     DESIGN = "design"

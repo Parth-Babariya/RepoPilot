@@ -1,0 +1,59 @@
+# Lint, tests (including the Qdrant tests against a real server) and a Docker build
+# on every push and pull request. No API keys are needed: no test calls an LLM.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.17.1
+      - run: ruff check --output-format=github
+      - run: ruff format --check
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.19.2   # same minor version as qdrant-client
+        ports:
+          - 6333:6333
+    env:
+      FASTEMBED_CACHE_PATH: /home/runner/.cache/fastembed
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      # the Qdrant tests download the embedding model once
+      - uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/fastembed
+          key: fastembed-bge-small-en-v1.5
+      - run: |
+          pip install -r requirements.txt
+          pip install --no-deps -e .
+      - name: Wait for Qdrant
+        run: timeout 60 bash -c 'until curl -sf http://localhost:6333/readyz; do sleep 2; done'
+      - run: pytest -q -rs
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t repopilot .
+      - run: docker run --rm --entrypoint python repopilot -c "import repopilot.main"

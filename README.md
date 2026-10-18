@@ -727,9 +727,12 @@ For example, the critic agent doesn't import the verification workflow; it recei
 
 ```bash
 poetry run pytest
+poetry run ruff check && poetry run ruff format --check   # lint and formatting
 ```
 
 Tests mirror `src/` (`tests/agents/`, `tests/workflows/`, `tests/retrieval/`, …). They cover the task store and orchestration loop, re-planning, budget pauses, verification checks, worktree isolation (against a real temporary git repo), answer checks and the revision loop, the task and planner agents, tool safety and token budgets, symbol extraction and call-graph queries, hybrid search, skills, usage tracking, eval metrics and the judge, reranking, source formatting and code chunking. A smoke test imports every module. No API keys are needed. The Qdrant tests run only when a Qdrant server is reachable (`docker run -p 6333:6333 qdrant/qdrant`) and are skipped otherwise.
+
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs on every push and pull request: ruff lint and format checks, the full test suite with a Qdrant server so no test is skipped, and a Docker image build.
 
 ## Tech stack
 
