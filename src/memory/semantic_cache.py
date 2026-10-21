@@ -4,11 +4,13 @@ import asyncio
 import hashlib
 import os
 import platform
+import re
 import socket
 import subprocess
 import time
 from urllib.parse import urlparse
 
+from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from redisvl.index import AsyncSearchIndex
 from redisvl.query import VectorQuery
@@ -16,11 +18,51 @@ from redisvl.query.filter import Tag
 from redisvl.redis.utils import array_to_buffer
 from repopilot.config import config
 from repopilot.observability.logger import get_logger
-from repopilot.services.llm_service import get_embedder
+from repopilot.services.llm_service import get_embedder, get_judge_llm, with_schema
 
 logger = get_logger(__name__)
 
 VECTOR_DTYPE = "float32"
+
+
+# ------------------------------------------------------------------
+# Confirming a near match. Embeddings capture the topic, not the direction:
+# "What calls fail_task?" and "What does fail_task call?" scored 0.984, and
+# "Where is get_retriever used?" vs "...defined?" 0.973, above any threshold
+# that still matches real rewordings. So a match that isn't the same text is
+# confirmed by the judge model (one short call) before its answer is reused.
+# ------------------------------------------------------------------
+
+
+class SameQuestion(BaseModel):
+    same: bool = Field(description="True only if an answer to one is a complete, correct answer to the other")
+
+
+_SAME_QUESTION_PROMPT = """Two questions about the same codebase. Would a correct answer to A also be a \
+complete, correct answer to B?
+
+Answer false if they differ in direction (what calls X vs what X calls), in what is asked about \
+(where X is used vs where it is defined, test tasks vs review tasks), or in scope. Answer true \
+only if B is a rewording of A.
+
+A: {a}
+B: {b}"""
+
+
+def _normalise(text: str) -> str:
+    return " ".join(re.findall(r"\w+", text.lower()))
+
+
+async def same_question(a: str, b: str) -> bool:
+    """Whether a cached answer to `b` answers `a`. Any doubt or error is a no: a miss is safe, a wrong hit isn't."""
+    if _normalise(a) == _normalise(b):
+        return True
+    try:
+        llm = with_schema(get_judge_llm("cache-check", temperature=0), SameQuestion)
+        return bool((await llm.ainvoke(_SAME_QUESTION_PROMPT.format(a=a, b=b))).same)
+    except Exception as e:
+        logger.warning(f"Cache match check failed, treating as a miss: {e}")
+        return False
 
 
 def _build_index_schema(dims: int) -> dict:
@@ -57,10 +99,11 @@ class SemanticCache:
     and a cached answer from one model shouldn't be served under another.
     """
 
-    def __init__(self, redis_url: str, threshold: float, dims: int):
+    def __init__(self, redis_url: str, threshold: float, dims: int, confirm_matches: bool = True):
         self.client = Redis.from_url(redis_url)
         self.embedder = get_embedder()
         self.threshold = threshold
+        self.confirm_matches = confirm_matches
         self.index = AsyncSearchIndex.from_dict(_build_index_schema(dims), redis_client=self.client)
 
     async def setup(self) -> None:
@@ -90,11 +133,14 @@ class SemanticCache:
         if hit is None:
             return None
         similarity = 1 - float(hit["vector_distance"])
-        if similarity >= self.threshold:
-            return hit["response"]
-        # A candidate exists but isn't close enough - treat as a miss rather
-        # than returning a possibly-wrong cached answer.
-        return None
+        if similarity < self.threshold:
+            # A candidate exists but isn't close enough - treat as a miss rather
+            # than returning a possibly-wrong cached answer.
+            return None
+        if self.confirm_matches and not await same_question(query, hit["query_text"]):
+            logger.info(f"Cache match rejected ({similarity:.3f}): {hit['query_text']!r} asks something else")
+            return None
+        return hit["response"]
 
     async def put(self, query: str, response: str, domain: str, model: str, ttl: int) -> None:
         """Store a (query, response) pair."""
@@ -117,6 +163,21 @@ class SemanticCache:
             entry = await self.client.hget(key, "domain")
             if entry and entry.decode() == domain:
                 await self.client.delete(key)
+
+    async def invalidate_if_changed(self, domain: str, fingerprint: str) -> bool:
+        """
+        Drop a domain's entries if its code changed since the last start. The file
+        watcher only sees edits while RepoPilot runs; a git pull or branch switch
+        in between would otherwise leave answers about the old code for a day.
+        Returns True if entries were dropped.
+        """
+        key = f"cache-fingerprint:{domain}"
+        previous = await self.client.get(key)
+        await self.client.set(key, fingerprint)
+        if previous is not None and previous.decode() == fingerprint:
+            return False
+        await self.invalidate_domain(domain)
+        return True
 
 
 def get_repo_domain(repo_path: str) -> str:
@@ -209,6 +270,7 @@ async def build_semantic_cache() -> SemanticCache | None:
             redis_url=redis_url,
             threshold=cache_config.get("threshold", 0.85),
             dims=dims,
+            confirm_matches=cache_config.get("confirm_matches", True),
         )
         await cache.setup()
         logger.info(f"Semantic cache: enabled (threshold={cache.threshold}, dims={dims})")

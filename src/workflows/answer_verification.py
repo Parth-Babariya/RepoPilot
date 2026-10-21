@@ -53,6 +53,7 @@ class AnswerCheck:
     passed: bool
     summary: str  # one line shown under the answer
     feedback: list[str] = field(default_factory=list)  # what the agent must fix on a revision
+    complete: bool = True  # False when a check that should have run was skipped (nothing retrieved, critic failed)
 
 
 def _looks_like_code(name: str) -> bool:
@@ -143,6 +144,10 @@ def max_revisions() -> int:
     return _settings()["max_revisions"]
 
 
+def verification_enabled() -> bool:
+    return _settings()["verify"]
+
+
 async def verify_answer(question: str, answer: str, sources: list[Source], evidence: list[str]) -> AnswerCheck | None:
     """Run the checks on one answer. None when verification is turned off (ask.verify)."""
     settings = _settings()
@@ -160,14 +165,14 @@ async def verify_answer(question: str, answer: str, sources: list[Source], evide
     if not settings["verify_with_llm"]:
         return AnswerCheck(True, refs)
     if not evidence:
-        return AnswerCheck(True, f"{refs} · claims not checked (no code was retrieved)")
+        return AnswerCheck(True, f"{refs} · claims not checked (no code was retrieved)", complete=False)
 
     try:
         verdict = await critique_answer(question, answer, evidence, report.unknown_names)
     except Exception as e:
         # The check is a safety net — if it fails, show the answer rather than nothing.
         logger.warning(f"Answer critic failed: {e}")
-        return AnswerCheck(True, f"{refs} · claims not checked (the answer critic failed)")
+        return AnswerCheck(True, f"{refs} · claims not checked (the answer critic failed)", complete=False)
     logger.info(
         f"Answer critic: grounded={verdict.grounded}, reason={verdict.reason}, unsupported={verdict.unsupported_claims}"
     )

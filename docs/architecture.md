@@ -100,7 +100,7 @@ sequenceDiagram
 
     U->>R: /ask how are failed tasks retried?
     Note over R,C: Only for the first question of a session.<br/>Follow-ups depend on history, so they skip the cache.
-    R->>C: lookup (cosine similarity ≥ 0.85)
+    R->>C: lookup (cosine similarity ≥ 0.85,<br/>then the judge confirms it's the same question)
     alt cache hit
         C-->>R: stored answer
         R-->>U: answer (no LLM or tool calls)
@@ -139,6 +139,8 @@ The agent chooses its tools itself. Questions about behaviour ("how does caching
 2. **Grounding (answer critic).** The judge model reads the answer next to the code the agent retrieved for it, and lists claims about the code that nothing retrieved supports. Names the answer formats as code but that appear nowhere in that code are passed to it as hints.
 
 A failing answer goes back to the agent once, with the problems listed, and it may search again before rewriting. The check result is printed under the answer (`✓ Checked: …` or `⚠ Not verified — …`), and an answer that still fails is never cached. Turn it off, or keep only the free citation checks, under `ask:` in the config.
+
+**What reaches the cache, and when it answers.** The cache is keyed on the question's embedding, which captures the topic but not the direction: "What calls `fail_task`?" and "What does `fail_task` call?" are 0.984 similar, "Where is `get_retriever` used?" and "…defined?" 0.973, so no threshold separates them from real rewordings. A match that isn't the same text is therefore confirmed by the judge model (one short call, about 1 s) before its answer is reused, and any doubt or error counts as a miss. Measured on 8 pairs, it rejected all 3 that ask different things and accepted 2 of 5 rewordings: it is strict on purpose, because a miss costs one normal answer and a wrong hit is a wrong answer. An answer is stored only when every check that should run did run and passed, so not one cut short by the token budget or whose claims went unchecked. Entries are dropped when the file watcher sees a change, and at startup when the code changed while RepoPilot was closed (a fingerprint of every indexable file's path, size and modification time).
 
 ## Retrieval
 
@@ -329,5 +331,5 @@ The semantic cache lives in Redis. With Qdrant, vectors live in your Qdrant serv
 - **Every loop has a ceiling.** Step limits per agent and token budgets per command. Reaching one pauses or ends work cleanly instead of failing it, and a paused plan loses no progress.
 - **A failure leads to a new plan, not a dead end.** Retries learn from the failure reason. A task that keeps failing is re-planned around rather than blocking everything after it.
 - **Least privilege.** Each task type gets only the tools it needs, agents can't leave the project folder or read `.env`, unfamiliar commands need your approval, MCP is read-only, and there is no delete tool at all, so a bad task can't destroy existing work.
-- **The cache only answers when it's safe.** It is keyed on the question alone, so it is used only for the first question in a session, and it is cleared whenever the code changes.
+- **The cache only answers when it's safe.** It is keyed on the question alone, so it is used only for the first question in a session. A close match must be confirmed as the same question, only fully checked answers are stored, and it is cleared whenever the code changes, even between runs.
 - **Changes are measured, not assumed.** Retrieval changes are judged on the eval set, and the results decide the defaults. Hybrid search was built, measured, and at first lost to vector search, so it was off. Once module-level code was indexed it measured best, so it became the default. The reranker never helped, so it stays off. The LLM judge itself can be checked against human labels with `/judge_check`.

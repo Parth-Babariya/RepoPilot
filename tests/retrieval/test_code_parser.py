@@ -80,3 +80,24 @@ def test_eval_answers_and_build_metadata_are_not_indexed(tmp_path, monkeypatch):
     for root in (".", str(tmp_path)):  # relative and absolute roots behave the same
         files = {p.replace("\\", "/").rsplit("/", 1)[-1] for p in get_source_files(root)}
         assert files == {"app.py"}
+
+
+def test_source_fingerprint_changes_with_the_code(tmp_path):
+    import os
+
+    from repopilot.retrieval.indexing.code_parser import source_fingerprint
+
+    app = tmp_path / "app.py"
+    app.write_text("x = 1\n")
+    first = source_fingerprint(str(tmp_path))
+    assert source_fingerprint(str(tmp_path)) == first
+
+    app.write_text("x = 2\n")
+    os.utime(app, ns=(1, 1))  # a different mtime even on coarse filesystem clocks
+    changed = source_fingerprint(str(tmp_path))
+    assert changed != first
+
+    (tmp_path / "logo.png").write_bytes(b"PNG image")
+    assert source_fingerprint(str(tmp_path)) == changed  # only indexable files count
+    (tmp_path / "util.py").write_text("y = 1\n")
+    assert source_fingerprint(str(tmp_path)) != changed

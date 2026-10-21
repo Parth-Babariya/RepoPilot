@@ -10,6 +10,8 @@ _FEATURE_LABELS = {
     "ask": "/ask",
     "plan": "/plan",
     "plan-judge": "/plan judge",
+    "ask-verify": "/ask answer checks",
+    "cache-check": "Cache match checks",
     "summarize": "Summarising",
     "eval": "/eval answers",
     "eval-judge": "/eval judge",

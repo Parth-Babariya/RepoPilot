@@ -9,7 +9,12 @@ from repopilot.observability.logger import get_logger
 from repopilot.observability.usage import get_usage_store
 from repopilot.tools.code_search import search_codebase, search_memory
 from repopilot.tools.sources import Source, collect_sources
-from repopilot.workflows.answer_verification import AnswerCheck, max_revisions, verify_answer
+from repopilot.workflows.answer_verification import (
+    AnswerCheck,
+    max_revisions,
+    verification_enabled,
+    verify_answer,
+)
 
 logger = get_logger(__name__)
 
@@ -104,6 +109,21 @@ async def _ask(agent, text: str, agent_config: dict, found: list[str] | None = N
     return _content(messages[-1]), evidence or _tool_outputs(messages)[-10:]
 
 
+def cacheable(check: AnswerCheck | None, cut_short: bool) -> bool:
+    """
+    Whether an answer may be stored in the semantic cache: only if every check
+    that should run did run and passed. Not an answer cut short by the token
+    budget (its checks may have been skipped), not one whose claims went
+    unchecked because nothing was retrieved or the critic failed. With
+    ask.verify off there is nothing to check, so a normal answer is stored.
+    """
+    if cut_short:
+        return False
+    if check is None:
+        return not verification_enabled()
+    return check.passed and check.complete
+
+
 async def _has_history(agent, agent_config: dict) -> bool:
     """True if this session (thread) already has messages in the checkpointer."""
     try:
@@ -179,13 +199,13 @@ async def handle_query(
                 evidence += more
                 revised = True
                 check = await verify_answer(question, answer, sources, evidence)
+            cut_short = budget_exhausted() is not None
     except Exception as e:
         logger.error(f"Agent error: {e}")
         return QueryResult(f"**Error:** {e}", error=True)
     get_usage_store().record_question(cache_hit=False, latency_ms=_elapsed_ms(started))
 
-    # Never cache an answer that failed its checks.
-    if use_cache and (check is None or check.passed):
+    if use_cache and cacheable(check, cut_short):
         try:
             ttl = config.get("semantic_cache", {}).get("ttl", 86400)
             await semantic_cache.put(question, answer, domain=cache_domain, model=model, ttl=ttl)

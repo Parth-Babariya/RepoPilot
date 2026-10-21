@@ -1,3 +1,5 @@
+import hashlib
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -312,3 +314,12 @@ def get_source_files(repo_path: str, skip_dirs: list[str] = None) -> list[str]:
     ]
     logger.info(f"Found {len(files)} source files in {repo_path}")
     return files
+
+
+def source_fingerprint(repo_path: str) -> str:
+    """A hash that changes whenever an indexable file is added, removed or modified."""
+    digest = hashlib.sha256()
+    for path in sorted(get_source_files(repo_path)):
+        stat = os.stat(path)
+        digest.update(f"{path}|{stat.st_mtime_ns}|{stat.st_size}\n".encode())
+    return digest.hexdigest()

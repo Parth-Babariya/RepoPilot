@@ -55,7 +55,7 @@ Sources:
 | **Tool safety** | Agents can only touch files inside the project and never `.env` files. Common read-only, build and test commands run directly; anything else asks you first. MCP is read-only, so the agent can't push code or open PRs. |
 | **Crash-safe execution** | Task state lives in SQLite (WAL mode). Tasks interrupted by a crash are recovered on the next run. |
 | **Live index** | A file watcher re-indexes changed files within seconds. Unchanged files are never re-embedded. |
-| **Semantic cache** | A Redis vector cache answers repeated questions instantly. It is used only for the first question of a session, so follow-ups never get a stale answer. |
+| **Semantic cache** | A Redis vector cache answers repeated questions instantly. A close match that isn't the same text is confirmed by the judge model first, because "What calls X?" and "What does X call?" embed 0.98 alike. Only fully checked answers are stored, only a session's first question uses it, and it is cleared when the code changes, including between runs. |
 | **Conversation memory** | Sessions survive restarts (LangGraph + SQLite). Long conversations are summarised automatically. |
 | **Evaluation suite** | `/eval` measures retrieval (hit rate, MRR), answer faithfulness and correctness (LLM judge), latency and cost, and compares each run with the last. `/judge_check` measures how often the judge agrees with your own labels. |
 | **Cost tracking** | `/stats` shows tokens, cost and latency per feature, plus how much the cache saved. |
@@ -266,7 +266,7 @@ All settings live in [`src/config/config.yaml`](src/config/config.yaml), documen
 | `rag` | `hybrid` (vector + BM25 keyword search, the default) or `semantic` (vector search only); works with either store |
 | `rerank` | Optional cross-encoder reranking (off by default, see the benchmark), the model and candidate count |
 | `symbols` | Turn the call-graph tools on or off |
-| `semantic_cache` | Redis URL, similarity threshold and TTL |
+| `semantic_cache` | Redis URL, similarity threshold, TTL, and whether close matches are confirmed by the judge model |
 | `memory` | When to summarise long conversations |
 | `tasks` | Time limit for verify commands, how many times a failed task may be re-planned per run, and worktree isolation (`worktree` / `none`) |
 | `ask` | The initial search before the agent starts, answer checks on or off, whether the LLM grounding check runs, and how many revisions |

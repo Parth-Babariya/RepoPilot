@@ -18,6 +18,9 @@ semantic_cache:
  wsl_distro: Ubuntu-24.04
  threshold: 0.85
  ttl: 86400
+ # A match that isn't the same text is confirmed by judge_model before its answer is reused:
+ # "What calls X?" and "What does X call?" are 0.98 similar but need different answers.
+ confirm_matches: true
 
 tasks:
  db_path: .repopilot/tasks.db

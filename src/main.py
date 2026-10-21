@@ -16,6 +16,7 @@ from repopilot.memory.session import get_current_session, new_session, switch_se
 from repopilot.observability.logger import enable_file_logging, get_logger
 from repopilot.observability.stats import show_stats
 from repopilot.observability.usage import track
+from repopilot.retrieval.indexing.code_parser import source_fingerprint
 from repopilot.retrieval.indexing.factory import get_index_inspector, get_indexer
 from repopilot.retrieval.indexing.watcher import start_watcher, stop_watcher
 from repopilot.services.llm_service import required_api_keys
@@ -140,6 +141,11 @@ async def initialize(checkpointer):
     cache_domain = get_repo_domain(repo_path) if semantic_cache else None
     if semantic_cache is not None:
         console.print(f"[dim]Semantic cache: enabled (threshold={semantic_cache.threshold})[/dim]")
+        try:
+            if await semantic_cache.invalidate_if_changed(cache_domain, source_fingerprint(repo_path)):
+                console.print("[dim]Code changed since the last run — cleared cached answers for this repo.[/dim]")
+        except Exception as e:
+            logger.warning(f"Could not check the cache against the code: {e}")
     else:
         reason = (
             "turned off in config.yaml"

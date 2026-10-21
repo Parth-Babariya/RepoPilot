@@ -74,6 +74,17 @@ def test_critic_decides_when_citations_are_fine(monkeypatch):
     assert not check.passed and check.feedback == ["retries 5 times"]
 
 
+def test_unchecked_claims_pass_but_are_marked_incomplete(monkeypatch):
+    async def broken_critic(*args):
+        raise RuntimeError("quota")
+
+    monkeypatch.setattr(av, "critique_answer", broken_critic)
+    check = asyncio.run(verify_answer("q", "See `src/orders.py`.", [], ["def place_order(): ..."]))
+    assert check.passed and not check.complete  # shown, but never cached
+    nothing_retrieved = asyncio.run(verify_answer("q", "See `src/orders.py`.", [], []))
+    assert nothing_retrieved.passed and not nothing_retrieved.complete
+
+
 def test_verification_can_be_turned_off(monkeypatch):
     monkeypatch.setitem(av.config, "ask", {"verify": False})
     assert asyncio.run(verify_answer("q", "`src/nope.py`", [], [])) is None
